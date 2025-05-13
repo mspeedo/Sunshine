@@ -51,7 +51,7 @@ jobs:
         id: setup_release
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GH_TOKEN }}
 
   build_linux_flatpak:
     name: Linux Flatpak
@@ -260,7 +260,7 @@ jobs:
           name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
   build_linux:
     name: Linux ${{ matrix.type }}
@@ -315,7 +315,7 @@ jobs:
 
       - name: Build latest libva
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         timeout-minutes: 5
         run: |
           gh release download --archive=tar.gz --repo=intel/libva
@@ -491,7 +491,7 @@ jobs:
           name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
   build_homebrew:
     name: Homebrew (${{ matrix.os_name }}-${{ matrix.os_version }}${{ matrix.release == true && ' (Release)' || '' }})
@@ -627,7 +627,7 @@ jobs:
           git_email: ${{ secrets.GH_BOT_EMAIL }}
           git_username: ${{ secrets.GH_BOT_NAME }}
           publish: false
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
           validate: true
 
       - name: Generate gcov report
@@ -702,7 +702,7 @@ jobs:
           name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Patch homebrew formula
         # create beta version of the formula
@@ -734,7 +734,7 @@ jobs:
           git_email: ${{ secrets.GH_BOT_EMAIL }}
           git_username: ${{ secrets.GH_BOT_NAME }}
           publish: true
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
           validate: false
 
   build_win:
@@ -1066,4 +1066,4 @@ jobs:
           name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
