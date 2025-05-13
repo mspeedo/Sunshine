@@ -126,7 +126,7 @@ jobs:
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           dotnet: ${{ needs.check_dockerfiles.outputs.dotnet }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GH_TOKEN }}
 
   docker:
     name: Docker${{ matrix.tag }}
@@ -365,7 +365,7 @@ jobs:
           name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Update Docker Hub Description
         if: >
