@@ -1176,7 +1176,7 @@ namespace config {
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, {0, 2});
 
     path_f(vars, "file_apps", stream.file_apps);
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {1, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
