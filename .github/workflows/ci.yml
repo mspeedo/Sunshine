@@ -186,7 +186,6 @@ jobs:
       - release-setup
       - build-docker
       - build-linux
-      - build-linux-copr
       - build-linux-flatpak
       - build-homebrew
       - build-windows
