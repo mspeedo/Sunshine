@@ -32,7 +32,7 @@
   #include <shellapi.h>
 #endif
 
-#ifndef __APPLE__
+#if !defined(__ANDROID__) && !defined(__APPLE__)
   // For NVENC legacy constants
   #include <ffnvcodec/nvEncodeAPI.h>
 #endif
@@ -504,7 +504,6 @@ namespace config {
       {}  // wa
     },  // display_device
 
-    1,  // min_fps_factor
     0  // max_bitrate
   };
 
@@ -1039,9 +1038,12 @@ namespace config {
   }
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
+#ifndef __ANDROID__
+    // TODO: Android can possibly support this
     if (!fs::exists(stream.file_apps.c_str())) {
       fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", stream.file_apps);
     }
+#endif
 
     for (auto &[name, val] : vars) {
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << val;
@@ -1067,7 +1069,7 @@ namespace config {
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
 
-#ifndef __APPLE__
+#if !defined(__ANDROID__) && !defined(__APPLE__)
     video.nv_legacy.preset = video.nv.quality_preset + 11;
     video.nv_legacy.multipass = video.nv.two_pass == nvenc::nvenc_two_pass::quarter_resolution ? NV_ENC_TWO_PASS_QUARTER_RESOLUTION :
                                 video.nv.two_pass == nvenc::nvenc_two_pass::full_resolution    ? NV_ENC_TWO_PASS_FULL_RESOLUTION :
@@ -1143,7 +1145,6 @@ namespace config {
       video.dd.wa.hdr_toggle_delay = std::chrono::milliseconds {value};
     }
 
-    int_between_f(vars, "min_fps_factor", video.min_fps_factor, {1, 3});
     int_f(vars, "max_bitrate", video.max_bitrate);
 
     path_f(vars, "pkey", nvhttp.pkey);
@@ -1240,6 +1241,7 @@ namespace config {
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian
+                                                                   "cs"sv,  // Czech
                                                                    "de"sv,  // German
                                                                    "en"sv,  // English
                                                                    "en_GB"sv,  // English (UK)
@@ -1257,6 +1259,7 @@ namespace config {
                                                                    "tr"sv,  // Turkish
                                                                    "uk"sv,  // Ukrainian
                                                                    "zh"sv,  // Chinese
+                                                                   "zh_TW"sv,  // Chinese (Traditional)
                                                                  });
 
     std::string log_level_string;
