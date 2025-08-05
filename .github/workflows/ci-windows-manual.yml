@@ -1,0 +1,15 @@
+# .github/workflows/ci-windows-only.yml
+name: CI-Windows (manual trigger)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    name: Windows
+    uses: ./.github/workflows/ci-windows.yml
+    with:
+      release_commit: ${{ github.sha }}
+      release_version: ${{ github.ref_name }}
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
