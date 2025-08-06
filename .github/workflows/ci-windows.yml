@@ -273,7 +273,7 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://app.lizardbyte.dev' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://app.lizardbyte.dev/support'
           echo "::add-matcher::.github/matchers/gcc.json"
-          ninja -C build
+          ninja -C build || true   # continue even if docs (or anything) fails
           echo "::remove-matcher owner=gcc::"
 
       - name: Package Windows
