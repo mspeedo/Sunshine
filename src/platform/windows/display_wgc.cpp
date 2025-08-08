@@ -105,39 +105,30 @@ namespace platf::dxgi {
       }
 
       auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-      d3d_img->blank = false;  // image is always ready for capture
+      d3d_img->blank = false;
 
-      // Assign the shared texture from the session to the img_d3d_t
-      d3d_img->capture_texture.reset(src.get());
-      src.get()->AddRef();  // Ensure the texture stays valid while we use it
-
-      // Get the keyed mutex from the shared texture
-      HRESULT status = d3d_img->capture_texture->QueryInterface(__uuidof(IDXGIKeyedMutex), (void **) &d3d_img->capture_mutex);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to query IDXGIKeyedMutex from shared texture [0x"sv << util::hex(status).to_string_view() << ']';
+      // Ensure this img has a persistent, shared+keyed-mutex texture owned by Sunshine
+      // (complete_img creates the texture + keyed mutex + shared handle once)
+      if (complete_img(d3d_img.get(), /*dummy=*/false)) {
         return capture_e::error;
       }
 
-      // Get the shared handle for the encoder
-      resource1_t resource;
-      status = d3d_img->capture_texture->QueryInterface(__uuidof(IDXGIResource1), (void **) &resource);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to query IDXGIResource1 [0x"sv << util::hex(status).to_string_view() << ']';
+      // We currently hold the helper-side keyed mutex through _ipc_session.
+      // Protect our own encoder-facing texture while we copy into it.
+      HRESULT status = d3d_img->capture_mutex->AcquireSync(0, INFINITE);
+      if (status != S_OK) {
+        BOOST_LOG(error) << "Failed to acquire local capture mutex [0x"
+                         << util::hex(status).to_string_view() << ']';
         return capture_e::error;
       }
 
-      // Create NT shared handle for the encoder device to use
-      status = resource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ, nullptr, &d3d_img->encoder_texture_handle);
-      if (FAILED(status)) {
-        BOOST_LOG(error) << "Failed to create NT shared texture handle [0x"sv << util::hex(status).to_string_view() << ']';
-        return capture_e::error;
-      }
+      // Copy helper frame into our persistent texture
+      device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
 
-      // Set the format and other properties
-      d3d_img->format = capture_format;
-      d3d_img->pixel_pitch = get_pixel_pitch();
-      d3d_img->row_pitch = d3d_img->pixel_pitch * d3d_img->width;
-      d3d_img->data = (std::uint8_t *) d3d_img->capture_texture.get();
+      d3d_img->capture_mutex->ReleaseSync(0);
+
+      // Format-related fields are already set by complete_img()
+      // (encoder handle is persistent in d3d_img->encoder_texture_handle)
 
       img->frame_timestamp = frame_timestamp;
       img_out = img;

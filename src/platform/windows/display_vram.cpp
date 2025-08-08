@@ -376,9 +376,16 @@ namespace platf::dxgi {
         }
 
         // Acquire encoder mutex to synchronize with capture code
-        auto status = img_ctx.encoder_mutex->AcquireSync(0, INFINITE);
+        // Non-blocking: skip this frame if capture still holds it
+        HRESULT status = img_ctx.encoder_mutex->AcquireSync(0, 0);
+        if (status == WAIT_TIMEOUT) {
+          // Don't stall the encode thread; keep last rendered contents
+          return 0;
+        }
         if (status != S_OK) {
-          BOOST_LOG(error) << "Failed to acquire encoder mutex [0x"sv << util::hex(status).to_string_view() << ']';
+          BOOST_LOG(error)
+            << "Failed to acquire encoder mutex [0x"
+            << util::hex(status).to_string_view() << ']';
           return -1;
         }
 
