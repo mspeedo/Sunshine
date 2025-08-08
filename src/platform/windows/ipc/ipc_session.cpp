@@ -16,9 +16,9 @@
 #include "config.h"
 #include "ipc_session.h"
 #include "misc_utils.h"
-#include "src/utility.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
+#include "src/utility.h"
 
 // platform includes
 #include <avrt.h>
@@ -46,23 +46,35 @@ namespace platf::dxgi {
   }
 
   void ipc_session_t::initialize_if_needed() {
-    if (_initialized.load()) {
+    // Fast path: already successfully initialized
+    if (_initialized.load(std::memory_order_acquire)) {
       return;
     }
 
-    if (bool expected = false; !_initialized.compare_exchange_strong(expected, true)) {
-      // Another thread is already initializing, wait for it to complete
-      while (_initialized.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // Attempt to become the initializing thread
+    bool expected = false;
+    if (!_initializing.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      // Another thread is initializing; wait until it finishes (either success or failure)
+      while (_initializing.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
-      return;
+      return;  // After wait, either initialized is true (success) or false (failure); caller can retry later
     }
+
+    // We are the initializing thread now. Ensure we clear the flag on all exit paths.
+    auto clear_initializing = util::fail_guard([this]() {
+      _initializing.store(false, std::memory_order_release);
+    });
 
     // Check if properly initialized via init() first
     if (!_process_helper) {
-      BOOST_LOG(debug) << "Cannot lazy_init without proper initialization";
+      BOOST_LOG(debug) << "Cannot initialize_if_needed without prior init()";
+      _initialized.store(false, std::memory_order_release);
       return;
     }
+
+    // Reset success flag before attempting
+    _initialized.store(false, std::memory_order_release);
 
     // Get the directory of the main executable (Unicode-safe)
     std::wstring exePathBuffer(MAX_PATH, L'\0');
@@ -158,26 +170,27 @@ namespace platf::dxgi {
     }
 
     if (handle_received) {
-      _initialized.store(true);
+      _initialized.store(true, std::memory_order_release);
     } else {
       BOOST_LOG(error) << "Failed to receive handle data from helper process! Helper is likely deadlocked!";
+      _initialized.store(false, std::memory_order_release);
     }
   }
 
   bool ipc_session_t::wait_for_frame(std::chrono::milliseconds timeout) {
-    frame_ready_msg_t frame_msg{};
+    frame_ready_msg_t frame_msg {};
     size_t bytesRead = 0;
     // Use a span over the frame_msg buffer
-    auto result = _frame_queue_pipe->receive_latest(std::span<uint8_t>(reinterpret_cast<uint8_t*>(&frame_msg), sizeof(frame_msg)), bytesRead, static_cast<int>(timeout.count()));
+    auto result = _frame_queue_pipe->receive_latest(std::span<uint8_t>(reinterpret_cast<uint8_t *>(&frame_msg), sizeof(frame_msg)), bytesRead, static_cast<int>(timeout.count()));
     if (result == PipeResult::Success && bytesRead == sizeof(frame_ready_msg_t)) {
-        if (frame_msg.message_type == FRAME_READY_MSG) {
-            _frame_qpc.store(frame_msg.frame_qpc, std::memory_order_release);
-            _frame_ready.store(true, std::memory_order_release);
-            return true;
-        }
+      if (frame_msg.message_type == FRAME_READY_MSG) {
+        _frame_qpc.store(frame_msg.frame_qpc, std::memory_order_release);
+        _frame_ready.store(true, std::memory_order_release);
+        return true;
+      }
     }
     return false;
-}
+  }
 
   bool ipc_session_t::try_get_adapter_luid(LUID &luid_out) {
     // Guarantee a clean value on failure
@@ -234,7 +247,6 @@ namespace platf::dxgi {
       return capture_e::reinit;
     } else if (hr != S_OK || hr == WAIT_TIMEOUT) {
       return capture_e::error;
-
     }
 
     // Set output parameters
@@ -273,12 +285,12 @@ namespace platf::dxgi {
     HANDLE duplicated_handle = nullptr;
     BOOL dup_result = DuplicateHandle(
       helper_process_handle,  // Source process (helper process)
-      shared_handle,          // Source handle
-      GetCurrentProcess(),    // Target process (this process)
-      &duplicated_handle,     // Target handle
-      0,                      // Desired access (0 = same as source)
-      FALSE,                  // Don't inherit
-      DUPLICATE_SAME_ACCESS   // Same access rights
+      shared_handle,  // Source handle
+      GetCurrentProcess(),  // Target process (this process)
+      &duplicated_handle,  // Target handle
+      0,  // Desired access (0 = same as source)
+      FALSE,  // Don't inherit
+      DUPLICATE_SAME_ACCESS  // Same access rights
     );
 
     if (!dup_result) {
@@ -294,7 +306,7 @@ namespace platf::dxgi {
 
     // Use ID3D11Device1 for opening shared resources by handle
     ID3D11Device1 *device1 = nullptr;
-    HRESULT hr = _device->QueryInterface(__uuidof(ID3D11Device1), (void**)&device1);
+    HRESULT hr = _device->QueryInterface(__uuidof(ID3D11Device1), (void **) &device1);
     if (FAILED(hr)) {
       BOOST_LOG(error) << "Failed to get ID3D11Device1 interface for duplicated handle: " << hr;
       return false;
@@ -303,9 +315,9 @@ namespace platf::dxgi {
     ID3D11Texture2D *raw_texture = nullptr;
     hr = device1->OpenSharedResource1(duplicated_handle, __uuidof(ID3D11Texture2D), (void **) &raw_texture);
     device1->Release();
-    
+
     if (FAILED(hr)) {
-      BOOST_LOG(error) << "Failed to open shared texture from duplicated handle: 0x" << std::hex << hr << " (decimal: " << std::dec << (int32_t)hr << ")";
+      BOOST_LOG(error) << "Failed to open shared texture from duplicated handle: 0x" << std::hex << hr << " (decimal: " << std::dec << (int32_t) hr << ")";
       return false;
     }
 
