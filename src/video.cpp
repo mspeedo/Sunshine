@@ -7,6 +7,7 @@
 #include <bitset>
 #include <list>
 #include <thread>
+#include <algorithm>
 
 // lib includes
 #include <boost/pointer_cast.hpp>
@@ -541,7 +542,7 @@ namespace video {
         {"delay"s, 0},
         {"forced-idr"s, 1},
         {"zerolatency"s, 1},
-        {"surfaces"s, 1},
+        {"surfaces"s, 2},
         {"cbr_padding"s, false},
         {"preset"s, &config::video.nv_legacy.preset},
         {"tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY},
@@ -562,7 +563,7 @@ namespace video {
         {"delay"s, 0},
         {"forced-idr"s, 1},
         {"zerolatency"s, 1},
-        {"surfaces"s, 1},
+        {"surfaces"s, 2},
         {"cbr_padding"s, false},
         {"preset"s, &config::video.nv_legacy.preset},
         {"tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY},
@@ -588,7 +589,7 @@ namespace video {
         {"delay"s, 0},
         {"forced-idr"s, 1},
         {"zerolatency"s, 1},
-        {"surfaces"s, 1},
+        {"surfaces"s, 2},
         {"cbr_padding"s, false},
         {"preset"s, &config::video.nv_legacy.preset},
         {"tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY},
@@ -1157,6 +1158,18 @@ namespace video {
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+    // Preallocate a tiny pool to avoid first-frame allocation stalls.
+    // Double-buffering keeps latency minimal while preventing capture from blocking the encoder.
+    constexpr size_t kMinCapturePool = 2;
+    {
+      size_t prealloc = 0;
+      for (auto it = imgs.begin(); it != imgs.end() && prealloc < kMinCapturePool; ++it, ++prealloc) {
+        *it = disp->alloc_img();
+        if (!*it || disp->dummy_img(it->get())) {
+          return;
+        }
+      }
+    }
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
@@ -1183,6 +1196,7 @@ namespace video {
       // decide whether to trim allocated unused above the currently used count
       // based on last used timestamp and universal timeout
       size_t trim_target = used_count;
+      trim_target = std::max(trim_target, (size_t)kMinCapturePool);
       for (size_t i = used_count; i < imgs_used_timestamps.size(); i++) {
         if (imgs_used_timestamps[i] && now - *imgs_used_timestamps[i] < trim_timeot) {
           trim_target = i;
@@ -1245,8 +1259,8 @@ namespace video {
           img_out->frame_timestamp.reset();
           return true;
         } else {
-          // sleep and retry if image pool is full
-          std::this_thread::sleep_for(1ms);
+          // yield and retry if image pool is full (don't inject 1ms sleeps)
+          std::this_thread::yield();
         }
       }
       return false;
@@ -1267,6 +1281,11 @@ namespace video {
           }
 
           if (frame_captured) {
+            // Mailbox policy: keep only the latest frame per encoder context to minimize latency.
+            // If there's an unconsumed frame, drop it and replace with the new one.
+            if (capture_ctx->images->peek()) {
+              capture_ctx->images->pop();
+            }
             capture_ctx->images->raise(img);
           }
 
@@ -2137,14 +2156,16 @@ namespace video {
       return encode_e::error;
     }
 
-    auto img = disp->alloc_img();
-    if (!img || disp->dummy_img(img.get())) {
+    // Ping-pong (double-buffer) in the sync path to avoid read/write stalls without queuing frames.
+    auto img0 = disp->alloc_img();
+    auto img1 = disp->alloc_img();
+    if (!img0 || !img1 || disp->dummy_img(img0.get()) || disp->dummy_img(img1.get())) {
       return encode_e::error;
     }
 
     std::vector<sync_session_t> synced_sessions;
     for (auto &ctx : synced_session_ctxs) {
-      auto synced_session = make_synced_session(disp.get(), encoder, *img, *ctx);
+      auto synced_session = make_synced_session(disp.get(), encoder, *img0, *ctx);
       if (!synced_session) {
         return encode_e::error;
       }
@@ -2227,8 +2248,10 @@ namespace video {
         return true;
       };
 
-      auto pull_free_image_callback = [&img](std::shared_ptr<platf::img_t> &img_out) -> bool {
-        img_out = img;
+      bool flip = false;
+      auto pull_free_image_callback = [&img0, &img1, &flip](std::shared_ptr<platf::img_t> &img_out) -> bool {
+        img_out = (flip ? img1 : img0);
+        flip = !flip;
         img_out->frame_timestamp.reset();
         return true;
       };
