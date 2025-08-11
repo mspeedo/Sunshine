@@ -41,21 +41,21 @@ namespace platf::dxgi {
     _process_helper = std::make_unique<ProcessHandler>();
     _config = config;
     _display_name = display_name;
-    _device = device;
+    _device.copy_from(device);
     return 0;
   }
 
   void ipc_session_t::initialize_if_needed() {
     // Fast path: already successfully initialized
-    if (_initialized.load(std::memory_order_acquire)) {
+    if (_initialized) {
       return;
     }
 
     // Attempt to become the initializing thread
     bool expected = false;
-    if (!_initializing.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    if (!_initializing.compare_exchange_strong(expected, true)) {
       // Another thread is initializing; wait until it finishes (either success or failure)
-      while (_initializing.load(std::memory_order_acquire)) {
+      while (_initializing) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
       return;  // After wait, either initialized is true (success) or false (failure); caller can retry later
@@ -63,18 +63,18 @@ namespace platf::dxgi {
 
     // We are the initializing thread now. Ensure we clear the flag on all exit paths.
     auto clear_initializing = util::fail_guard([this]() {
-      _initializing.store(false, std::memory_order_release);
+      _initializing = false;
     });
 
     // Check if properly initialized via init() first
     if (!_process_helper) {
       BOOST_LOG(debug) << "Cannot initialize_if_needed without prior init()";
-      _initialized.store(false, std::memory_order_release);
+      _initialized = false;
       return;
     }
 
     // Reset success flag before attempting
-    _initialized.store(false, std::memory_order_release);
+    _initialized = false;
 
     // Get the directory of the main executable (Unicode-safe)
     std::wstring exePathBuffer(MAX_PATH, L'\0');
@@ -115,7 +115,7 @@ namespace platf::dxgi {
 
     auto on_broken_pipe = [this]() {
       BOOST_LOG(warning) << "Broken pipe detected, forcing re-init";
-      _force_reinit.store(true);
+      _force_reinit = true;
     };
 
     auto anon_connector = std::make_unique<AnonymousPipeFactory>();
@@ -170,10 +170,10 @@ namespace platf::dxgi {
     }
 
     if (handle_received) {
-      _initialized.store(true, std::memory_order_release);
+      _initialized = true;
     } else {
       BOOST_LOG(error) << "Failed to receive handle data from helper process! Helper is likely deadlocked!";
-      _initialized.store(false, std::memory_order_release);
+      _initialized = false;
     }
   }
 
@@ -184,8 +184,8 @@ namespace platf::dxgi {
     auto result = _frame_queue_pipe->receive_latest(std::span<uint8_t>(reinterpret_cast<uint8_t *>(&frame_msg), sizeof(frame_msg)), bytesRead, static_cast<int>(timeout.count()));
     if (result == PipeResult::Success && bytesRead == sizeof(frame_ready_msg_t)) {
       if (frame_msg.message_type == FRAME_READY_MSG) {
-        _frame_qpc.store(frame_msg.frame_qpc, std::memory_order_release);
-        _frame_ready.store(true, std::memory_order_release);
+        _frame_qpc = frame_msg.frame_qpc;
+        _frame_ready = true;
         return true;
       }
     }
@@ -193,26 +193,22 @@ namespace platf::dxgi {
   }
 
   bool ipc_session_t::try_get_adapter_luid(LUID &luid_out) {
-    // Guarantee a clean value on failure
-    memset(&luid_out, 0, sizeof(LUID));
+    luid_out = {};
 
     if (!_device) {
-      BOOST_LOG(warning) << "No D3D11 device available; default adapter will be used";
+      BOOST_LOG(warning) << "_device was null; default adapter will be used";
       return false;
     }
 
-    winrt::com_ptr<IDXGIDevice> dxgi_device;
+    winrt::com_ptr<IDXGIDevice> dxgi_device = _device.try_as<IDXGIDevice>();
+    if (!dxgi_device) {
+      BOOST_LOG(warning) << "try_as<IDXGIDevice>() failed; default adapter will be used";
+      return false;
+    }
+
     winrt::com_ptr<IDXGIAdapter> adapter;
-
-    HRESULT hr =
-      _device->QueryInterface(__uuidof(IDXGIDevice), dxgi_device.put_void());
-    if (FAILED(hr)) {
-      BOOST_LOG(warning) << "QueryInterface(IDXGIDevice) failed; default adapter will be used";
-      return false;
-    }
-
-    hr = dxgi_device->GetAdapter(adapter.put());
-    if (FAILED(hr)) {
+    HRESULT hr = dxgi_device->GetAdapter(adapter.put());
+    if (FAILED(hr) || !adapter) {
       BOOST_LOG(warning) << "GetAdapter() failed; default adapter will be used";
       return false;
     }
@@ -228,7 +224,7 @@ namespace platf::dxgi {
     return true;
   }
 
-  capture_e ipc_session_t::acquire(std::chrono::milliseconds timeout, ID3D11Texture2D *&gpu_tex_out, uint64_t &frame_qpc_out) {
+  capture_e ipc_session_t::acquire(std::chrono::milliseconds timeout, winrt::com_ptr<ID3D11Texture2D> &gpu_tex_out, uint64_t &frame_qpc_out) {
     if (!wait_for_frame(timeout)) {
       return capture_e::timeout;
     }
@@ -250,8 +246,8 @@ namespace platf::dxgi {
     }
 
     // Set output parameters
-    gpu_tex_out = _shared_texture.get();
-    frame_qpc_out = _frame_qpc.load(std::memory_order_acquire);
+    gpu_tex_out = _shared_texture;
+    frame_qpc_out = _frame_qpc;
 
     return capture_e::ok;
   }
@@ -304,40 +300,35 @@ namespace platf::dxgi {
       }
     });
 
-    // Use ID3D11Device1 for opening shared resources by handle
-    ID3D11Device1 *device1 = nullptr;
-    HRESULT hr = _device->QueryInterface(__uuidof(ID3D11Device1), (void **) &device1);
-    if (FAILED(hr)) {
-      BOOST_LOG(error) << "Failed to get ID3D11Device1 interface for duplicated handle: " << hr;
+    auto device1 = _device.as<ID3D11Device1>();
+    if (!device1) {
+      BOOST_LOG(error) << "Failed to get ID3D11Device1 interface for duplicated handle";
       return false;
     }
 
-    ID3D11Texture2D *raw_texture = nullptr;
-    hr = device1->OpenSharedResource1(duplicated_handle, __uuidof(ID3D11Texture2D), (void **) &raw_texture);
-    device1->Release();
-
-    if (FAILED(hr)) {
+    winrt::com_ptr<IUnknown> unknown;
+    HRESULT hr = device1->OpenSharedResource1(duplicated_handle, __uuidof(IUnknown), winrt::put_abi(unknown));
+    auto texture = unknown.as<ID3D11Texture2D>();
+    if (FAILED(hr) || !texture) {
       BOOST_LOG(error) << "Failed to open shared texture from duplicated handle: 0x" << std::hex << hr << " (decimal: " << std::dec << (int32_t) hr << ")";
       return false;
     }
 
     // Verify texture properties
     D3D11_TEXTURE2D_DESC desc;
-    raw_texture->GetDesc(&desc);
+    texture->GetDesc(&desc);
 
-    _shared_texture.reset(raw_texture);
+    _shared_texture = texture;
     _width = width;
     _height = height;
 
     // Get keyed mutex interface for synchronization
-    IDXGIKeyedMutex *raw_mutex = nullptr;
-    hr = _shared_texture->QueryInterface(__uuidof(IDXGIKeyedMutex), (void **) &raw_mutex);
-    if (FAILED(hr)) {
-      BOOST_LOG(error) << "Failed to get keyed mutex interface from shared texture: " << hr;
-      _shared_texture.reset();
+    _keyed_mutex = _shared_texture.as<IDXGIKeyedMutex>();
+    if (!_keyed_mutex) {
+      BOOST_LOG(error) << "Failed to get keyed mutex interface from shared texture";
+      _shared_texture = nullptr;
       return false;
     }
-    _keyed_mutex.reset(raw_mutex);
     return true;
   }
 
