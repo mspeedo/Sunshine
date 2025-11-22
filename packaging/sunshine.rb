@@ -1,6 +1,6 @@
 require "language/node"
 
-class @PROJECT_NAME@ < Formula
+class Sunshine < Formula
   # conflicts_with "sunshine", because: "sunshine and sunshine-beta cannot be installed at the same time"
   desc "@PROJECT_DESCRIPTION@"
   homepage "@PROJECT_HOMEPAGE_URL@"
@@ -35,6 +35,7 @@ class @PROJECT_NAME@ < Formula
   depends_on "miniupnpc"
   depends_on "openssl"
   depends_on "opus"
+  depends_on "boost" => :recommended
   depends_on "icu4c" => :recommended
 
   on_linux do

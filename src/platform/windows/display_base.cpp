@@ -121,7 +121,13 @@ namespace platf::dxgi {
     display->display_refresh_rate = dup_desc.ModeDesc.RefreshRate;
     double display_refresh_rate_decimal = (double) display->display_refresh_rate.Numerator / display->display_refresh_rate.Denominator;
     BOOST_LOG(info) << "Display refresh rate [" << display_refresh_rate_decimal << "Hz]";
-    BOOST_LOG(info) << "Requested frame rate [" << display->client_frame_rate << "fps]";
+    if (display->client_frame_rate_strict.Numerator > 0) {
+      int num = display->client_frame_rate_strict.Numerator;
+      int den = display->client_frame_rate_strict.Denominator;
+      BOOST_LOG(info) << "Requested frame rate [" << num << "/" << den << " exactly " << av_q2d(AVRational {num, den}) << " fps]";
+    } else {
+      BOOST_LOG(info) << "Requested frame rate [" << display->client_frame_rate << "fps]";
+    }
     display->display_refresh_rate_rounded = lround(display_refresh_rate_decimal);
     return 0;
   }
@@ -621,6 +627,12 @@ namespace platf::dxgi {
     }
 
     client_frame_rate = config.framerate;
+    client_frame_rate_strict = {0, 0};
+    if (config.framerateX100 > 0) {
+      AVRational fps = ::video::framerateX100_to_rational(config.framerateX100);
+      client_frame_rate_strict = DXGI_RATIONAL {static_cast<UINT>(fps.num), static_cast<UINT>(fps.den)};
+    }
+
     dxgi::output6_t output6 {};
     status = output->QueryInterface(IID_IDXGIOutput6, (void **) &output6);
     if (SUCCEEDED(status)) {
@@ -959,8 +971,9 @@ namespace platf {
       return {};
     }
 
-    dxgi::adapter_t adapter;
-    for (int x = 0; factory->EnumAdapters1(x, &adapter) != DXGI_ERROR_NOT_FOUND; ++x) {
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter {adapter_p};
       DXGI_ADAPTER_DESC1 adapter_desc;
       adapter->GetDesc1(&adapter_desc);
 
