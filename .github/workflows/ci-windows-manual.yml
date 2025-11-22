@@ -11,5 +11,3 @@ jobs:
     with:
       release_commit: ${{ github.sha }}
       release_version: ${{ github.ref_name }}
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
