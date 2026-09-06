@@ -2461,7 +2461,7 @@ namespace video {
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(max_frametime)) {
           if (source_capture_rate_limiter) {
-            const auto delay = source_capture_rate_limiter->delay_until_next_frame(std::chrono::steady_clock::now());
+            const auto delay = source_capture_rate_limiter->delay_until_next_frame(std::chrono::steady_clock::now(), img->frame_timestamp);
             if (delay > std::chrono::nanoseconds::zero()) {
               if (source_capture_rate_timer) {
                 source_capture_rate_timer->sleep_for(delay);

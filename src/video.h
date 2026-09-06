@@ -801,11 +801,31 @@ namespace video {
 
     /**
      * @brief Calculate how long the encoder should wait before processing another source frame.
+     * @details When a source presentation timestamp is available, rate limiting is based on that
+     *          presentation timeline rather than encoder-thread wake timing. This preserves true
+     *          sub-ceiling VRR cadence even when capture/encoder scheduling latency varies. The
+     *          wall-clock deadline remains as a fallback for backends/frames without timestamps.
      *
      * @param now Current encoder-thread time.
+     * @param frame_timestamp Source presentation timestamp for the candidate frame, when available.
      * @return Remaining delay before another frame may be encoded, or zero when immediately due.
      */
-    std::chrono::nanoseconds delay_until_next_frame(std::chrono::steady_clock::time_point now) const {
+    std::chrono::nanoseconds delay_until_next_frame(
+      std::chrono::steady_clock::time_point now,
+      const std::optional<std::chrono::steady_clock::time_point> &frame_timestamp = std::nullopt
+    ) const {
+      if (frame_interval_ <= std::chrono::nanoseconds::zero()) {
+        return std::chrono::nanoseconds::zero();
+      }
+
+      if (frame_timestamp && last_frame_timestamp_) {
+        const auto target_timestamp = std::max(*frame_timestamp, *last_frame_timestamp_ + frame_interval_);
+        if (now >= target_timestamp) {
+          return std::chrono::nanoseconds::zero();
+        }
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(target_timestamp - now);
+      }
+
       if (!next_encode_time_ || now >= *next_encode_time_) {
         return std::chrono::nanoseconds::zero();
       }
