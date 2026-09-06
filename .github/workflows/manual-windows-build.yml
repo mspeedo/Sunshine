@@ -1,0 +1,19 @@
+---
+name: Manual Windows Build
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Windows
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-windows.yml
+    with:
+      # Manual development build: build/package/upload artifacts, but never publish/sign a release.
+      publish_release: 'false'
+      release_commit: ${{ github.sha }}
+      release_version: '0.0.0'
