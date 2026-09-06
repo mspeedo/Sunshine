@@ -348,6 +348,13 @@ namespace platf::dxgi {
           }
           break;
         case platf::capture_e::ok:
+          // Source-driven DDA can consume a presentation event that does not change the encoded
+          // image (for example, hidden hardware-cursor motion). In that case snapshot() returns
+          // success without an image so we can release the DDA frame immediately without treating
+          // it as a 200 ms acquisition timeout or waking the encoder.
+          if (source_driven_capture && !img_out) {
+            break;
+          }
           if (!push_captured_image_cb(std::move(img_out), true)) {
             return capture_e::ok;
           }

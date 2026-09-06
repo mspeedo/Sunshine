@@ -662,6 +662,7 @@ namespace platf::dxgi {
 
     duplication_t dup;  ///< Desktop Duplication session used to acquire frames.
     cursor_t cursor;  ///< Cursor.
+    bool last_output_blended_cursor = false;  ///< Whether the previous output image contained the hardware cursor.
   };
 
   /**
@@ -718,6 +719,7 @@ namespace platf::dxgi {
     texture2d_t old_surface_delayed_destruction;  ///< Old surface delayed destruction.
     std::chrono::steady_clock::time_point old_surface_timestamp;  ///< Old surface timestamp.
     std::variant<std::monostate, texture2d_t, std::shared_ptr<platf::img_t>> last_frame_variant;  ///< Last frame variant.
+    bool last_output_blended_cursor = false;  ///< Whether the previous output image contained the hardware cursor.
   };
 
   /**

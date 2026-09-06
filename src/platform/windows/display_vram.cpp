@@ -1369,12 +1369,6 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
 
-    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
-    if (auto qpc_displayed = std::max(frame_info.LastPresentTime.QuadPart, frame_info.LastMouseUpdateTime.QuadPart)) {
-      // Translate QueryPerformanceCounter() value to steady_clock time point
-      frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
-    }
-
     if (frame_info.PointerShapeBufferSize > 0) {
       DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
 
@@ -1403,6 +1397,21 @@ namespace platf::dxgi {
     }
 
     const bool blend_mouse_cursor_flag = (cursor_alpha.visible || cursor_xor.visible) && cursor_visible;
+
+    // A mouse-only DDA notification does not change the encoded image when the hardware cursor
+    // was hidden previously and remains hidden now. Ignore these no-op updates so high mouse
+    // polling rates cannot consume source-driven capture/encode slots while gaming.
+    if (!frame_update_flag && !last_output_blended_cursor && !blend_mouse_cursor_flag) {
+      return capture_e::ok;
+    }
+
+    // Desktop updates must keep the desktop presentation timestamp. Mouse timing is only used
+    // for cursor-only images; otherwise mouse polling can perturb the VRR presentation cadence.
+    const auto qpc_displayed = frame_update_flag ? frame_info.LastPresentTime.QuadPart : frame_info.LastMouseUpdateTime.QuadPart;
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    if (qpc_displayed) {
+      frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), qpc_displayed);
+    }
 
     texture2d_t src {};
     if (frame_update_flag) {
@@ -1754,6 +1763,7 @@ namespace platf::dxgi {
       img_out->frame_timestamp = frame_timestamp;
     }
 
+    last_output_blended_cursor = blend_mouse_cursor_flag;
     return capture_e::ok;
   }
 
