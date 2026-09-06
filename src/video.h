@@ -5,7 +5,9 @@
 #pragma once
 
 // standard includes
+#include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string_view>
 
 // local includes
@@ -778,4 +780,79 @@ namespace video {
     const AVRational fps = framerate_to_rational(config);
     return std::chrono::nanoseconds {(static_cast<int64_t>(fps.den) * 1'000'000'000LL) / fps.num};
   }
+
+  /**
+   * @brief Per-client limiter for source-driven display capture.
+   * @details Frames from source-driven capture are allowed through immediately while the source
+   *          rate is at or below the client rate. When the source is faster, the encoder thread
+   *          waits only until the next client-rate boundary while the one-slot capture mailbox
+   *          continues to retain the newest frame. Presentation timestamps are clamped to the
+   *          same minimum interval so clients never receive a frame cadence above their limit.
+   */
+  class source_capture_rate_limiter_t {
+  public:
+    /**
+     * @brief Construct a limiter for the requested client frame interval.
+     *
+     * @param frame_interval Minimum interval between encoded frames.
+     */
+    explicit source_capture_rate_limiter_t(std::chrono::nanoseconds frame_interval):
+        frame_interval_(frame_interval) {}
+
+    /**
+     * @brief Calculate how long the encoder should wait before processing another source frame.
+     *
+     * @param now Current encoder-thread time.
+     * @return Remaining delay before another frame may be encoded, or zero when immediately due.
+     */
+    std::chrono::nanoseconds delay_until_next_frame(std::chrono::steady_clock::time_point now) const {
+      if (!next_encode_time_ || now >= *next_encode_time_) {
+        return std::chrono::nanoseconds::zero();
+      }
+      return std::chrono::duration_cast<std::chrono::nanoseconds>(*next_encode_time_ - now);
+    }
+
+    /**
+     * @brief Record the time at which a source frame begins encoding.
+     *
+     * @param now Current encoder-thread time.
+     */
+    void mark_frame_encoded(std::chrono::steady_clock::time_point now) {
+      if (frame_interval_ <= std::chrono::nanoseconds::zero()) {
+        next_encode_time_.reset();
+        return;
+      }
+      next_encode_time_ = now + frame_interval_;
+    }
+
+    /**
+     * @brief Clamp a captured frame timestamp to the configured client-rate ceiling.
+     * @details Source timestamps slower than the client ceiling remain unchanged. Timestamps that
+     *          would imply a faster cadence are advanced to one frame interval after the previous
+     *          forwarded timestamp. Missing timestamps remain missing and do not disturb state.
+     *
+     * @param frame_timestamp Source presentation timestamp for the selected captured frame.
+     * @return Timestamp safe to forward to the streaming transport.
+     */
+    std::optional<std::chrono::steady_clock::time_point> limit_frame_timestamp(
+      const std::optional<std::chrono::steady_clock::time_point> &frame_timestamp
+    ) {
+      if (!frame_timestamp || frame_interval_ <= std::chrono::nanoseconds::zero()) {
+        return frame_timestamp;
+      }
+
+      auto limited_timestamp = *frame_timestamp;
+      if (last_frame_timestamp_) {
+        limited_timestamp = std::max(limited_timestamp, *last_frame_timestamp_ + frame_interval_);
+      }
+
+      last_frame_timestamp_ = limited_timestamp;
+      return limited_timestamp;
+    }
+
+  private:
+    std::chrono::nanoseconds frame_interval_;  ///< Client-requested minimum interval between encoded frames.
+    std::optional<std::chrono::steady_clock::time_point> next_encode_time_;  ///< Next time a source frame may begin encoding.
+    std::optional<std::chrono::steady_clock::time_point> last_frame_timestamp_;  ///< Last timestamp forwarded to the transport.
+  };
 }  // namespace video

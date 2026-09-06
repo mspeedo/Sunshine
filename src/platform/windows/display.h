@@ -636,6 +636,14 @@ namespace platf::dxgi {
      */
     int init(const ::video::config_t &config, const std::string &display_name);
     /**
+     * @brief Report that Desktop Duplication capture is driven by presentation events.
+     *
+     * @return Always true for the Desktop Duplication backend.
+     */
+    bool is_capture_source_driven() const override {
+      return true;
+    }
+    /**
      * @brief Capture a display frame into the provided image object.
      *
      * @param pull_free_image_cb Callback that provides an available image buffer.
@@ -669,6 +677,14 @@ namespace platf::dxgi {
      * @return 0 on success; nonzero or negative platform status on failure.
      */
     int init(const ::video::config_t &config, const std::string &display_name);
+    /**
+     * @brief Report that Desktop Duplication capture is driven by presentation events.
+     *
+     * @return Always true for the Desktop Duplication backend.
+     */
+    bool is_capture_source_driven() const override {
+      return true;
+    }
     /**
      * @brief Capture a display frame into the provided image object.
      *

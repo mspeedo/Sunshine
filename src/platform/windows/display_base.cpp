@@ -234,7 +234,11 @@ namespace platf::dxgi {
       return {(uint32_t) client_frame_rate, 1};
     };
 
-    DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    const bool source_driven_capture = is_capture_source_driven();
+    DXGI_RATIONAL client_frame_rate_adjusted {};
+    if (!source_driven_capture) {
+      client_frame_rate_adjusted = adjust_client_frame_rate();
+    }
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
 
@@ -260,69 +264,77 @@ namespace platf::dxgi {
       platf::capture_e status = capture_e::ok;
       std::shared_ptr<img_t> img_out;
 
-      // Try to continue frame pacing group, snapshot() is called with zero timeout after waiting for client frame interval
-      if (frame_pacing_group_start) {
-        const uint32_t seconds = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator / client_frame_rate_adjusted.Numerator;
-        const uint32_t remainder = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator % client_frame_rate_adjusted.Numerator;
-        const auto sleep_target = *frame_pacing_group_start +
-                                  std::chrono::nanoseconds(1s) * seconds +
-                                  std::chrono::nanoseconds(1s) * remainder / client_frame_rate_adjusted.Numerator;
-        const auto sleep_period = sleep_target - std::chrono::steady_clock::now();
+      if (source_driven_capture) {
+        // Desktop Duplication already blocks until the source reports a desktop or cursor update.
+        // Do not impose a client-rate timer here; per-client rate limiting happens downstream.
+        status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor);
+      } else {
+        // Try to continue frame pacing group, snapshot() is called with zero timeout after waiting for client frame interval
+        if (frame_pacing_group_start) {
+          const uint32_t seconds = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator / client_frame_rate_adjusted.Numerator;
+          const uint32_t remainder = (uint64_t) frame_pacing_group_frames * client_frame_rate_adjusted.Denominator % client_frame_rate_adjusted.Numerator;
+          const auto sleep_target = *frame_pacing_group_start +
+                                    std::chrono::nanoseconds(1s) * seconds +
+                                    std::chrono::nanoseconds(1s) * remainder / client_frame_rate_adjusted.Numerator;
+          const auto sleep_period = sleep_target - std::chrono::steady_clock::now();
 
-        if (sleep_period <= 0ns) {
-          // We missed next frame time, invalidating current frame pacing group
-          frame_pacing_group_start = std::nullopt;
-          frame_pacing_group_frames = 0;
-          status = capture_e::timeout;
-        } else {
-          timer->sleep_for(sleep_period);
-          sleep_overshoot_logger.first_point(sleep_target);
-          sleep_overshoot_logger.second_point_now_and_log();
-
-          status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
-
-          if (status == capture_e::ok && img_out) {
-            frame_pacing_group_frames += 1;
-          } else {
+          if (sleep_period <= 0ns) {
+            // We missed next frame time, invalidating current frame pacing group
             frame_pacing_group_start = std::nullopt;
             frame_pacing_group_frames = 0;
+            status = capture_e::timeout;
+          } else {
+            timer->sleep_for(sleep_period);
+            sleep_overshoot_logger.first_point(sleep_target);
+            sleep_overshoot_logger.second_point_now_and_log();
+
+            status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+
+            if (status == capture_e::ok && img_out) {
+              frame_pacing_group_frames += 1;
+            } else {
+              frame_pacing_group_start = std::nullopt;
+              frame_pacing_group_frames = 0;
+            }
+          }
+        }
+
+        // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
+        if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
+          status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor);
+
+          if (status == capture_e::ok && img_out) {
+            frame_pacing_group_start = img_out->frame_timestamp;
+
+            if (!frame_pacing_group_start) {
+              BOOST_LOG(warning) << "snapshot() provided image without timestamp";
+              frame_pacing_group_start = std::chrono::steady_clock::now();
+            }
+
+            frame_pacing_group_frames = 1;
           }
         }
       }
 
-      // Start new frame pacing group if necessary, snapshot() is called with non-zero timeout
-      if (status == capture_e::timeout || (status == capture_e::ok && !frame_pacing_group_start)) {
-        status = snapshot(pull_free_image_cb, img_out, 200ms, *cursor);
-
-        if (status == capture_e::ok && img_out) {
-          frame_pacing_group_start = img_out->frame_timestamp;
-
-          if (!frame_pacing_group_start) {
-            BOOST_LOG(warning) << "snapshot() provided image without timestamp";
-            frame_pacing_group_start = std::chrono::steady_clock::now();
-          }
-
-          frame_pacing_group_frames = 1;
-        } else if (status == platf::capture_e::timeout) {
-          // The D3D11 device is protected by an unfair lock that is held the entire time that
-          // IDXGIOutputDuplication::AcquireNextFrame() is running. This is normally harmless,
-          // however sometimes the encoding thread needs to interact with our ID3D11Device to
-          // create dummy images or initialize the shared state that is used to pass textures
-          // between the capture and encoding ID3D11Devices.
-          //
-          // When we're in a state where we're not actively receiving frames regularly, we will
-          // spend almost 100% of our time in AcquireNextFrame() holding that critical lock.
-          // Worse still, since it's unfair, we can monopolize it while the encoding thread
-          // is starved. The encoding thread may acquire it for a few moments across a few
-          // ID3D11Device calls before losing it again to us for another long time waiting in
-          // AcquireNextFrame(). The starvation caused by this lock contention causes encoder
-          // reinitialization to take several seconds instead of a fraction of a second.
-          //
-          // To avoid starving the encoding thread, sleep without the lock held for a little
-          // while each time we reach our max frame timeout. This will only happen when nothing
-          // is updating the display, so no visible stutter should be introduced by the sleep.
-          std::this_thread::sleep_for(10ms);
-        }
+      if (status == platf::capture_e::timeout) {
+        // The D3D11 device is protected by an unfair lock that is held the entire time that
+        // IDXGIOutputDuplication::AcquireNextFrame() is running. This is normally harmless,
+        // however sometimes the encoding thread needs to interact with our ID3D11Device to
+        // create dummy images or initialize the shared state that is used to pass textures
+        // between the capture and encoding ID3D11Devices.
+        //
+        // When we're in a state where we're not actively receiving frames regularly, we will
+        // spend almost 100% of our time in AcquireNextFrame() holding that critical lock.
+        // Worse still, since it's unfair, we can monopolize it while the encoding thread
+        // is starved. The encoding thread may acquire it for a few moments across a few
+        // ID3D11Device calls before losing it again to us for another long time waiting in
+        // AcquireNextFrame(). The starvation caused by this lock contention causes encoder
+        // reinitialization to take several seconds instead of a fraction of a second.
+        //
+        // To avoid starving the encoding thread, sleep without the lock held for a little
+        // while each time we reach our max frame timeout. This will only happen when nothing
+        // is updating the display, so no visible stutter should be introduced by the sleep.
+        std::this_thread::sleep_for(10ms);
       }
 
       switch (status) {

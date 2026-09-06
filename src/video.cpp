@@ -2408,6 +2408,19 @@ namespace video {
     std::chrono::duration<double, std::milli> max_frametime {1000.0 / minimum_fps_target};
     BOOST_LOG(info) << "Minimum FPS target set to ~"sv << minimum_fps_target << "fps ("sv << max_frametime.count() << "ms)"sv;
 
+    std::optional<source_capture_rate_limiter_t> source_capture_rate_limiter;
+    std::unique_ptr<platf::high_precision_timer> source_capture_rate_timer;
+    if (disp->is_capture_source_driven()) {
+      const auto frame_interval = capture_frame_interval(config);
+      source_capture_rate_limiter.emplace(frame_interval);
+      source_capture_rate_timer = platf::create_high_precision_timer();
+      if (!source_capture_rate_timer || !*source_capture_rate_timer) {
+        BOOST_LOG(warning) << "Failed to create high precision timer for source-driven capture rate limiting; falling back to std::this_thread::sleep_for()"sv;
+        source_capture_rate_timer.reset();
+      }
+      BOOST_LOG(info) << "Source-driven capture frame-rate ceiling set to ~"sv << config.framerate << "fps"sv;
+    }
+
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
@@ -2447,7 +2460,28 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       if (!requested_idr_frame || images->peek()) {
         if (auto img = images->pop(max_frametime)) {
-          frame_timestamp = img->frame_timestamp;
+          if (source_capture_rate_limiter) {
+            const auto delay = source_capture_rate_limiter->delay_until_next_frame(std::chrono::steady_clock::now());
+            if (delay > std::chrono::nanoseconds::zero()) {
+              if (source_capture_rate_timer) {
+                source_capture_rate_timer->sleep_for(delay);
+              } else {
+                std::this_thread::sleep_for(delay);
+              }
+
+              // Capture continues on a separate thread while we wait. Replace the early frame
+              // with the newest frame currently in the one-slot mailbox to minimize latency.
+              if (auto newer_img = images->try_pop()) {
+                img = std::move(newer_img);
+              }
+            }
+
+            source_capture_rate_limiter->mark_frame_encoded(std::chrono::steady_clock::now());
+            frame_timestamp = source_capture_rate_limiter->limit_frame_timestamp(img->frame_timestamp);
+          } else {
+            frame_timestamp = img->frame_timestamp;
+          }
+
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             return;

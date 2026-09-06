@@ -715,6 +715,16 @@ namespace platf {
     virtual capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) = 0;
 
     /**
+     * @brief Report whether capture timing is driven directly by source presentation events.
+     * @details Source-driven backends bypass client-rate capture pacing and therefore require
+     *          downstream per-client rate limiting before frames are handed to encoders.
+     * @return True when capture emits frames directly from source presentation events.
+     */
+    virtual bool is_capture_source_driven() const {
+      return false;
+    }
+
+    /**
      * @brief Allocate an image buffer compatible with this display backend.
      *
      * @return Allocated img object, or null when unavailable.
