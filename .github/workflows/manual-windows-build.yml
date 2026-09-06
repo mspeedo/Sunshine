@@ -14,6 +14,7 @@ jobs:
     uses: ./.github/workflows/ci-windows.yml
     with:
       # Manual development build: build/package/upload artifacts, but never publish/sign a release.
+      build_matrix: '{"include":[{"name":"Windows-AMD64","os":"windows-2022","arch":"x86_64","msystem":"ucrt64","toolchain":"ucrt-x86_64"}]}'
       publish_release: 'false'
       release_commit: ${{ github.sha }}
       release_version: '0.0.0'
