@@ -27,6 +27,7 @@ extern "C" {
 #include "display_device.h"
 #include "globals.h"
 #include "input.h"
+#include "latency_benchmark.h"
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
@@ -2179,12 +2180,17 @@ namespace stream {
 
   namespace session {
     std::atomic_uint running_sessions;  ///< Running sessions.
+    std::atomic_uint running_framerate_total;  ///< Sum of requested video frame rates for running sessions.
 
     /**
      * @brief Platform handle returned from stream setup.
      */
     state_e state(session_t &session) {
       return session.state.load(std::memory_order_relaxed);
+    }
+
+    int active_framerate() {
+      return static_cast<int>(running_framerate_total.load(std::memory_order_relaxed));
     }
 
     /**
@@ -2236,8 +2242,12 @@ namespace stream {
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
 
+      running_framerate_total.fetch_sub(session.config.monitor.framerate, std::memory_order_relaxed);
+
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
+        (void) latency_benchmark::stop();
+
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
         if (proc::proc.running()) {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -2292,6 +2302,8 @@ namespace stream {
       session.videoThread = std::jthread {videoThread, &session};
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+
+      running_framerate_total.fetch_add(session.config.monitor.framerate, std::memory_order_relaxed);
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {

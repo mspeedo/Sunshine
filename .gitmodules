@@ -29,6 +29,10 @@
 	path = third-party/moonlight-common-c
 	url = https://github.com/moonlight-stream/moonlight-common-c.git
 	branch = master
+[submodule "third-party/moonlight-latency-helper"]
+	path = third-party/moonlight-latency-helper
+	url = https://github.com/mspeedo/moonlight-latency-helper.git
+	branch = sunshine-benchmark-integration
 [submodule "third-party/nvapi"]
 	path = third-party/nvapi
 	url = https://github.com/NVIDIA/nvapi.git

@@ -28,6 +28,9 @@
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#ifdef _WIN32
+#include "latency_benchmark_http.h"
+#endif
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
@@ -1652,6 +1655,11 @@ namespace nvhttp {
       resume(host_audio, resp, req);
     };
     https_server.resource["^/cancel$"]["GET"] = cancel;
+#ifdef _WIN32
+    https_server.resource["^/latencybenchmark$"]["GET"] = [](auto resp, auto req) {
+      latency_benchmark_control(resp, req);
+    };
+#endif
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);
