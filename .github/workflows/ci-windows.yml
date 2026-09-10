@@ -21,6 +21,10 @@ on:
         required: false
         type: string
         default: ''
+      build_docs:
+        required: false
+        type: boolean
+        default: true
       build_matrix:
         required: false
         type: string
@@ -38,7 +42,7 @@ on:
       # Azure Client ID (App Registration) for Artifact Signing
       AZURE_CLIENT_ID:
         required: false
-      # Azure Client Secret for Artifact Signing
+      # Azure Client Secret (App Registration) for Artifact Signing
       AZURE_CLIENT_SECRET:
         required: false
       # Azure Tenant ID for Artifact Signing
@@ -142,6 +146,7 @@ jobs:
           fi
 
       - name: Install Doxygen
+        if: inputs.build_docs
         # GCC compiled doxygen has issues when running graphviz
         env:
           DOXYGEN_VERSION: "1.11.0"
@@ -235,6 +240,7 @@ jobs:
             -B build \
             -G Ninja \
             -S . \
+            -DBUILD_DOCS=${{ inputs.build_docs && 'ON' || 'OFF' }} \
             -DBUILD_WERROR=ON \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DSUNSHINE_ASSETS_DIR=assets \
