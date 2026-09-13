@@ -1,0 +1,132 @@
+---
+name: Manual Windows Installer
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows-installer:
+    name: Windows installer
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      PYTHON_VERSION: '3.14'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884  # v2.32.0
+        with:
+          msystem: ucrt64
+          update: true
+          install: >-
+            wget
+
+      - name: Install Windows build dependencies
+        shell: msys2 {0}
+        run: |
+          pacman -Syu --noconfirm \
+            git \
+            mingw-w64-ucrt-x86_64-boost \
+            mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-cppwinrt \
+            mingw-w64-ucrt-x86_64-curl-winssl \
+            mingw-w64-ucrt-x86_64-gcc \
+            mingw-w64-ucrt-x86_64-graphviz \
+            mingw-w64-ucrt-x86_64-miniupnpc \
+            mingw-w64-ucrt-x86_64-nlohmann-json \
+            mingw-w64-ucrt-x86_64-onevpl \
+            mingw-w64-ucrt-x86_64-openssl \
+            mingw-w64-ucrt-x86_64-opus \
+            mingw-w64-ucrt-x86_64-toolchain \
+            mingw-w64-ucrt-x86_64-qt6-static \
+            mingw-w64-ucrt-x86_64-MinHook \
+            mingw-w64-ucrt-x86_64-nsis
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          dotnet-version: '10.x'
+
+      - name: Setup NodeJS
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 'lts/*'
+
+      - name: Export NodeJS path
+        shell: pwsh
+        run: |
+          $nodePath = Split-Path -Path (Get-Command node).Source -Parent
+          echo "NODEJS_PATH=$nodePath" >> $env:GITHUB_ENV
+
+      - name: Setup Python
+        id: setup-python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Sync required Python tools
+        shell: msys2 {0}
+        env:
+          MSYS2_PATH_TYPE: inherit
+          UV_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+        run: |
+          uv sync \
+            --locked \
+            --no-python-downloads \
+            --no-install-project
+
+      - name: Build Sunshine
+        shell: msys2 {0}
+        env:
+          BRANCH: ${{ github.ref_name }}
+          BUILD_VERSION: '0.0.0'
+          COMMIT: ${{ github.sha }}
+        run: |
+          NODEJS_PATH=$(cygpath "$NODEJS_PATH")
+          export PATH="$PATH:$NODEJS_PATH"
+
+          cmake \
+            -B build \
+            -G Ninja \
+            -S . \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_WERROR=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSUNSHINE_ASSETS_DIR=assets \
+            -DSUNSHINE_PUBLISHER_NAME="${GITHUB_REPOSITORY_OWNER}" \
+            -DSUNSHINE_PUBLISHER_WEBSITE="https://app.lizardbyte.dev" \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support"
+
+          ninja -C build
+
+      - name: Create Windows installer
+        shell: msys2 {0}
+        run: |
+          mkdir -p artifacts
+          cd build
+          cpack -G WIX
+          mv ./cpack_artifacts/Sunshine.msi ../artifacts/Sunshine-Windows-AMD64-installer.msi
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: Sunshine-Windows-AMD64-installer
+          path: artifacts/Sunshine-Windows-AMD64-installer.msi
+          if-no-files-found: error
+          retention-days: 14
