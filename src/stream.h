@@ -88,6 +88,15 @@ namespace stream {
      */
     state_e state(session_t &session);
     /**
+     * @brief Return the aggregate requested video frame rate of running sessions.
+     *
+     * The latency benchmark calls this only after verifying exactly one stream is
+     * active, so the returned aggregate is that stream's requested video FPS.
+     *
+     * @return Sum of requested video frame rates for currently running sessions.
+     */
+    int active_framerate();
+    /**
      * @brief Return the paired client certificate for a stream session.
      *
      * @param session Active streaming or pairing session for the request.
