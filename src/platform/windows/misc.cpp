@@ -1779,7 +1779,10 @@ namespace platf {
     };
     static const double frequency = get_frequency();
     if (frequency) {
-      return std::chrono::nanoseconds((int64_t) ((performance_counter1 - performance_counter2) * frequency / std::nano::den));
+      // QueryPerformanceFrequency() is expressed in ticks per second, so convert
+      // the QPC delta to seconds by dividing by the frequency, then to nanoseconds.
+      return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<double> {(performance_counter1 - performance_counter2) / frequency});
     }
     return {};
   }

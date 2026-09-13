@@ -342,6 +342,130 @@ INSTANTIATE_TEST_SUITE_P(
 );
 
 /**
+ * @brief Source-driven rate limiting waits only when the source arrives above the client ceiling.
+ */
+TEST(SourceCaptureRateLimiterTest, DelaysOnlyFasterSource) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  const auto client_interval = std::chrono::nanoseconds {8333333};  // 120 Hz
+  video::source_capture_rate_limiter_t limiter {client_interval};
+
+  EXPECT_EQ(std::chrono::nanoseconds::zero(), limiter.delay_until_next_frame(base));
+  limiter.mark_frame_encoded(base);
+
+  EXPECT_EQ(
+    std::chrono::nanoseconds {1388889},
+    limiter.delay_until_next_frame(base + std::chrono::nanoseconds {6944444})  // 144 Hz source
+  );
+  EXPECT_EQ(
+    std::chrono::nanoseconds::zero(),
+    limiter.delay_until_next_frame(base + std::chrono::nanoseconds {11111111})  // 90 Hz source
+  );
+}
+
+/**
+ * @brief Presentation timestamps, not encoder wake jitter, decide whether a VRR frame needs limiting.
+ */
+TEST(SourceCaptureRateLimiterTest, UsesSourcePresentationTimelineForDelay) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  const auto client_interval = std::chrono::nanoseconds {8333333};  // 120 Hz
+  video::source_capture_rate_limiter_t limiter {client_interval};
+
+  // Establish the previous forwarded presentation at t=0.
+  EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+  limiter.mark_frame_encoded(base + std::chrono::microseconds {500});
+
+  // A real 117.6 Hz source frame presented 8.5 ms later must pass immediately even if
+  // changing capture latency made its encoder-thread arrival close to a wall-clock deadline.
+  const auto slow_source_timestamp = base + std::chrono::microseconds {8500};
+  EXPECT_EQ(
+    std::chrono::nanoseconds::zero(),
+    limiter.delay_until_next_frame(base + std::chrono::microseconds {8600}, slow_source_timestamp)
+  );
+
+  // A 144 Hz source frame is genuinely above the ceiling, so pace it to t=8.333333 ms.
+  const auto fast_source_timestamp = base + std::chrono::nanoseconds {6944444};
+  EXPECT_EQ(
+    std::chrono::nanoseconds {1233333},
+    limiter.delay_until_next_frame(base + std::chrono::microseconds {7100}, fast_source_timestamp)
+  );
+}
+
+/**
+ * @brief Presentation-timestamp pacing remains phase-locked despite timer wake overshoot.
+ */
+TEST(SourceCaptureRateLimiterTest, PresentationTimelineDoesNotAccumulateTimerOvershoot) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  const auto client_interval = std::chrono::nanoseconds {8333333};
+  video::source_capture_rate_limiter_t limiter {client_interval};
+
+  EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+
+  const auto first_fast_source = base + std::chrono::nanoseconds {6944444};
+  EXPECT_EQ(
+    std::chrono::nanoseconds {1233333},
+    limiter.delay_until_next_frame(base + std::chrono::microseconds {7100}, first_fast_source)
+  );
+
+  // Simulate waking 100 us late, then update the forwarded presentation timestamp.
+  limiter.mark_frame_encoded(base + client_interval + std::chrono::microseconds {100});
+  EXPECT_EQ(base + client_interval, limiter.limit_frame_timestamp(first_fast_source));
+
+  // The next 144 Hz frame is still paced against 2 * client_interval, not against
+  // the overslept encoder wake time.
+  const auto second_fast_source = base + std::chrono::nanoseconds {13888888};
+  EXPECT_EQ(
+    std::chrono::nanoseconds {2666666},
+    limiter.delay_until_next_frame(base + std::chrono::milliseconds {14}, second_fast_source)
+  );
+}
+
+/**
+ * @brief Source-driven timestamp limiting preserves slower VRR timing and clamps faster cadence.
+ */
+TEST(SourceCaptureRateLimiterTest, LimitsPresentationTimestamps) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  const auto client_interval = std::chrono::nanoseconds {8333333};  // 120 Hz
+
+  {
+    video::source_capture_rate_limiter_t limiter {client_interval};
+    EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+    EXPECT_EQ(
+      base + client_interval,
+      limiter.limit_frame_timestamp(base + std::chrono::nanoseconds {6944444})  // 144 Hz source
+    );
+    EXPECT_EQ(
+      base + client_interval * 2,
+      limiter.limit_frame_timestamp(base + std::chrono::nanoseconds {13888888})
+    );
+  }
+
+  {
+    video::source_capture_rate_limiter_t limiter {client_interval};
+    EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+    EXPECT_EQ(
+      base + std::chrono::nanoseconds {11111111},
+      limiter.limit_frame_timestamp(base + std::chrono::nanoseconds {11111111})  // 90 Hz source
+    );
+  }
+}
+
+/**
+ * @brief Missing capture timestamps remain missing without resetting the limiter's known cadence.
+ */
+TEST(SourceCaptureRateLimiterTest, MissingTimestampPreservesState) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  const auto client_interval = std::chrono::nanoseconds {8333333};
+  video::source_capture_rate_limiter_t limiter {client_interval};
+
+  EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+  EXPECT_EQ(std::nullopt, limiter.limit_frame_timestamp(std::nullopt));
+  EXPECT_EQ(
+    base + client_interval,
+    limiter.limit_frame_timestamp(base + std::chrono::milliseconds {1})
+  );
+}
+
+/**
  * @brief Software encoder converts BGR0 and NV12 frames, including padded strides and
  *        backends that don't report the pixel pitch.
  */
