@@ -27,6 +27,7 @@ extern "C" {
 #include "display_device.h"
 #include "globals.h"
 #include "input.h"
+#include "latency_benchmark.h"
 #include "logging.h"
 #include "network.h"
 #include "platform/common.h"
@@ -1537,14 +1538,6 @@ namespace stream {
 
     crypto::aes_t iv(12);
 
-    auto timer = platf::create_high_precision_timer();
-    if (!timer || !*timer) {
-      BOOST_LOG(error) << "Failed to create timer, aborting video broadcast thread";
-      return;
-    }
-
-    auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
-
     while (auto packet = packets->pop()) {
       if (shutdown_event->peek()) {
         break;
@@ -1656,9 +1649,6 @@ namespace stream {
       }
 
       try {
-        // Use around 80% of 1Gbps          1Gbps            percent    ms     packet      byte
-        size_t ratecontrol_packets_in_1ms = std::giga::num * 80 / 100 / 1000 / blocksize / 8;
-
         // Send less than 64K in a single batch.
         // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
         // appear in "Other I/O" and begin waiting for interrupts.
@@ -1668,12 +1658,6 @@ namespace stream {
         // unusually small packet size.
         // Generic Segmentation Offload on Linux can't do more than 64.
         send_batch_size = std::min<size_t>(64, send_batch_size);
-
-        // Don't ignore the last ratecontrol group of the previous frame
-        auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
-
-        size_t ratecontrol_frame_packets_sent = 0;
-        size_t ratecontrol_group_packets_sent = 0;
 
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
@@ -1720,10 +1704,10 @@ namespace stream {
           size_t next_shard_to_send = 0;
 
           // RTP video timestamps use a 90 KHz clock and the frame_timestamp from when the frame was captured
-          // When a timestamp isn't available (duplicate frames), the timestamp from rate control is used instead.
+          // When a timestamp isn't available (duplicate frames), the current monotonic time is used instead.
           bool frame_is_dupe = false;
           if (!packet->frame_timestamp) {
-            packet->frame_timestamp = ratecontrol_next_frame_start;
+            packet->frame_timestamp = std::chrono::steady_clock::now();
             frame_is_dupe = true;
           }
           using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
@@ -1767,22 +1751,6 @@ namespace stream {
             }
 
             if (x - next_shard_to_send + 1 >= send_batch_size || x + 1 == shards.size()) {
-              // Do pacing within the frame.
-              // Also trigger pacing before the first send_batch() of the frame
-              // to account for the last send_batch() of the previous frame.
-              if (ratecontrol_group_packets_sent >= ratecontrol_packets_in_1ms || ratecontrol_frame_packets_sent == 0) {
-                auto due = ratecontrol_frame_start +
-                           std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                             ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
-
-                auto now = std::chrono::steady_clock::now();
-                if (now < due) {
-                  timer->sleep_for(due - now);
-                }
-
-                ratecontrol_group_packets_sent = 0;
-              }
-
               size_t current_batch_size = x - next_shard_to_send + 1;
               batch_info.block_offset = next_shard_to_send;
               batch_info.block_count = current_batch_size;
@@ -1809,16 +1777,9 @@ namespace stream {
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
 
-              ratecontrol_group_packets_sent += current_batch_size;
-              ratecontrol_frame_packets_sent += current_batch_size;
               next_shard_to_send = x + 1;
             }
           }
-
-          // remember this in case the next frame comes immediately
-          ratecontrol_next_frame_start = ratecontrol_frame_start +
-                                         std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                                           ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
 
           frame_network_latency_logger.second_point_now_and_log();
 
@@ -2179,12 +2140,17 @@ namespace stream {
 
   namespace session {
     std::atomic_uint running_sessions;  ///< Running sessions.
+    std::atomic_uint running_framerate_total;  ///< Sum of requested video frame rates for running sessions.
 
     /**
      * @brief Platform handle returned from stream setup.
      */
     state_e state(session_t &session) {
       return session.state.load(std::memory_order_relaxed);
+    }
+
+    int active_framerate() {
+      return static_cast<int>(running_framerate_total.load(std::memory_order_relaxed));
     }
 
     /**
@@ -2236,8 +2202,12 @@ namespace stream {
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
 
+      running_framerate_total.fetch_sub(session.config.monitor.framerate, std::memory_order_relaxed);
+
       // If this is the last session, invoke the platform callbacks
       if (--running_sessions == 0) {
+        (void) latency_benchmark::stop();
+
         bool revert_display_config {config::video.dd.config_revert_on_disconnect};
         if (proc::proc.running()) {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -2292,6 +2262,8 @@ namespace stream {
       session.videoThread = std::jthread {videoThread, &session};
 
       session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+
+      running_framerate_total.fetch_add(session.config.monitor.framerate, std::memory_order_relaxed);
 
       // If this is the first session, invoke the platform callbacks
       if (++running_sessions == 1) {
