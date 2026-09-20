@@ -32,7 +32,7 @@
 [submodule "third-party/moonlight-latency-helper"]
 	path = third-party/moonlight-latency-helper
 	url = https://github.com/mspeedo/moonlight-latency-helper.git
-	branch = sunshine-benchmark-integration
+	branch = main
 [submodule "third-party/nvapi"]
 	path = third-party/nvapi
 	url = https://github.com/NVIDIA/nvapi.git

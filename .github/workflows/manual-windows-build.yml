@@ -23,6 +23,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Update latency helper to latest main
+        shell: pwsh
+        run: git submodule update --remote --init --recursive third-party/moonlight-latency-helper
+
       - name: Setup MSYS2
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884  # v2.32.0
         with:

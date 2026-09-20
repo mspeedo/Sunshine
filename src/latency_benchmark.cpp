@@ -184,7 +184,7 @@ namespace latency_benchmark {
     const double helper_fps = stream_fps * 0.975;
 
     const std::string command_line =
-      "\"" + helper_utf8 + "\" --fps " + std::to_string(helper_fps) + " --noise 50";
+      "\"" + helper_utf8 + "\" --fps " + std::to_string(helper_fps);
 
     boost::filesystem::path working_directory {path.parent_path().wstring()};
     auto environment = boost::this_process::environment();
