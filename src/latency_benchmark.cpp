@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <sddl.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
