@@ -7,7 +7,9 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
+#include <cstdint>
 #include <sstream>
+#include <string>
 #include <string_view>
 
 using namespace std::literals;
@@ -64,6 +66,41 @@ namespace nvhttp {
           tree.put("root.<xmlattr>.status_code", 501);
           tree.put("root.<xmlattr>.status_message", "Latency benchmark helper is unsupported on this platform");
           break;
+      }
+
+      write_response();
+      return;
+    }
+
+    if (action_it->second == "sample"sv) {
+      const auto sequence_it = args.find("sequence");
+      if (sequence_it == std::end(args)) {
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "Missing latency benchmark sequence");
+        write_response();
+        return;
+      }
+
+      uint64_t sequence = 0;
+      try {
+        sequence = std::stoull(sequence_it->second);
+      } catch (const std::exception &) {
+        tree.put("root.<xmlattr>.status_code", 400);
+        tree.put("root.<xmlattr>.status_message", "Invalid latency benchmark sequence");
+        write_response();
+        return;
+      }
+
+      uint64_t wait_us = 0;
+      tree.put("root.<xmlattr>.status_code", 200);
+      if (latency_benchmark::sample(sequence, wait_us) ==
+          latency_benchmark::sample_status_e::ready) {
+        tree.put("root.latencybenchmark", "sample");
+        tree.put("root.sequence", sequence);
+        tree.put("root.wait_us", wait_us);
+      } else {
+        tree.put("root.latencybenchmark", "missing");
+        tree.put("root.sequence", sequence);
       }
 
       write_response();
