@@ -16,10 +16,12 @@
 #include <boost/core/noncopyable.hpp>
 #ifndef _WIN32
   #include <boost/asio.hpp>
-  #include <boost/process/v1.hpp>
 #endif
 
 // local includes
+#ifndef _WIN32
+  #include "src/boost_process_compat.h"
+#endif
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/thread_safe.h"
@@ -1187,11 +1189,12 @@ namespace platf {
    * @brief Press or release a virtual keyboard key.
    *
    * @param input Platform input backend that receives the event.
-   * @param modcode Modifier key code to update.
+   * @param modcode Portable key code to update.
    * @param release Whether the key or button event is a release.
    * @param flags Bit flags that modify the requested operation.
+   * @param extended Whether the client positively identified an extended key.
    */
-  void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags);
+  void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended = false);
   void gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state);
   /**
    * @brief Submit UTF-8 text input to the keyboard backend.

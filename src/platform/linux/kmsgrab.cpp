@@ -6,7 +6,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <filesystem>
+#include <future>
 #include <ranges>
+#include <stdexcept>
 #include <thread>
 #include <unistd.h>
 
@@ -51,14 +53,19 @@ namespace platf {
 
           cap_value_t sys_admin = CAP_SYS_ADMIN;
           if (cap_set_flag(caps, CAP_EFFECTIVE, 1, &sys_admin, CAP_SET) || cap_set_proc(caps)) {
-            BOOST_LOG(error) << "Failed to gain CAP_SYS_ADMIN";
+            BOOST_LOG(error) << "Failed to gain CAP_SYS_ADMIN"sv;
           }
         }
 
         ~cap_sys_admin() {
           cap_value_t sys_admin = CAP_SYS_ADMIN;
-          if (cap_set_flag(caps, CAP_EFFECTIVE, 1, &sys_admin, CAP_CLEAR) || cap_set_proc(caps)) {
-            BOOST_LOG(error) << "Failed to drop CAP_SYS_ADMIN";
+          if (cap_set_flag(caps, CAP_EFFECTIVE, 1, &sys_admin, CAP_CLEAR)) {
+            BOOST_LOG(error) << "Failed to clear CAP_SYS_ADMIN capability flag"sv;
+          } else if (cap_set_proc(caps)) {
+            // CAP_SYS_ADMIN may already have been dropped by privileged_drm_worker.
+            if (errno != EPERM) {
+              BOOST_LOG(error) << "Failed to drop CAP_SYS_ADMIN"sv;
+            }
           }
           cap_free(caps);
         }
@@ -66,6 +73,14 @@ namespace platf {
         cap_t caps;  ///< Caps.
       };
 #endif
+
+      /**
+       * @brief Reports that the privileged DRM worker rejected a task.
+       */
+      class privileged_drm_worker_stopped final: public std::runtime_error {
+      public:
+        using std::runtime_error::runtime_error;  ///< Inherit standard runtime error constructors.
+      };
 
       /**
        * @brief Set up privileged worker thread exclusively for handling DRM capture resources.
@@ -83,30 +98,30 @@ namespace platf {
         // deliberately align prototype to match path signature via init(const char *path)
         static int open_drm_card_fd_privileged(const char *path) {
           try {
-            return instance().run([=]() -> int {
+            return instance().run([path] {
               return platf::open_drm_card_fd(path);
             });
-          } catch (const std::runtime_error &) {
+          } catch (const privileged_drm_worker_stopped &) {
             return -1;
           }
         }
 
         static drmModeFB2Ptr drmModeGetFB2_privileged(int fd, uint32_t bufferId) {
           try {
-            return instance().run([&]() -> drmModeFB2Ptr {
+            return instance().run([fd, bufferId] {
               return drmModeGetFB2(fd, bufferId);
             });
-          } catch (const std::runtime_error &) {
+          } catch (const privileged_drm_worker_stopped &) {
             return nullptr;
           }
         }
 
         static drmModeFBPtr drmModeGetFB_privileged(int fd, uint32_t bufferId) {
           try {
-            return instance().run([&]() -> drmModeFBPtr {
+            return instance().run([fd, bufferId] {
               return drmModeGetFB(fd, bufferId);
             });
-          } catch (const std::runtime_error &) {
+          } catch (const privileged_drm_worker_stopped &) {
             return nullptr;
           }
         }
@@ -118,37 +133,34 @@ namespace platf {
         }
 
         void drop_privileges() {
-          instance().run([]() -> void {
+          instance().run([] {
             platf::drop_elevated_privileges(true);
           });
         }
 
-        privileged_drm_worker() {
-          thread_ = std::thread([this] {
-            sigset_t all;
-            sigfillset(&all);
-            if (pthread_sigmask(SIG_BLOCK, &all, nullptr) != 0) {
-              BOOST_LOG(error) << "Failed to block signals in drm_worker"sv;
-              queue_.stop();
-              return;
-            }
-
-            platf::set_thread_name("drm_worker");
-            for (;;) {
-              auto task = queue_.pop();
-              if (!task) {
-                break;
+        privileged_drm_worker():
+            thread_ {[this] {
+              sigset_t all;
+              sigfillset(&all);
+              if (pthread_sigmask(SIG_BLOCK, &all, nullptr) != 0) {
+                BOOST_LOG(error) << "Failed to block signals in drm_worker"sv;
+                queue_.stop();
+                return;
               }
-              (*task)();
-            }
-          });
+
+              platf::set_thread_name("drm_worker");
+              for (;;) {
+                auto task = queue_.pop();
+                if (!task) {
+                  break;
+                }
+                (*task)();
+              }
+            }} {
         }
 
         ~privileged_drm_worker() {
           queue_.stop();
-          if (thread_.joinable()) {
-            thread_.join();
-          }
         }
 
         template<class F>
@@ -167,14 +179,14 @@ namespace platf {
           if (!queue_.raise([task]() mutable {
                 (*task)();
               })) {
-            throw std::runtime_error("privileged_drm_worker: task rejected (worker stopping)");
+            throw privileged_drm_worker_stopped {"privileged_drm_worker: task rejected (worker stopping)"};
           }
 
           return fut.get();
         }
 
         safe::queue_t<std::function<void()>> queue_ {32, safe::queue_t<std::function<void()>>::overflow_policy_e::reject};
-        std::thread thread_;
+        std::jthread thread_;
       };
     }  // namespace
 
@@ -200,7 +212,10 @@ namespace platf {
      * @brief Allows the DRM privileged_drm_worker thread to drop privileges.
      */
     void drop_drm_worker_privileges() {
-      privileged_drm_worker::drop_worker_privileges();
+      static std::once_flag flag;
+      std::call_once(flag, []() {
+        privileged_drm_worker::drop_worker_privileges();
+      });
     }
 #endif
 
@@ -429,6 +444,7 @@ namespace platf {
       _CONVERT("HDMI-B"sv, HDMIB);
       _CONVERT("TV"sv, TV);
       _CONVERT("eDP"sv, eDP);
+      _CONVERT("Meta"sv, VIRTUAL);  ///<  GNOME Shell (Mutter) virtual monitor
       _CONVERT("VIRTUAL"sv, VIRTUAL);
       _CONVERT("Virtual"sv, VIRTUAL);
       _CONVERT("DSI"sv, DSI);

@@ -9,6 +9,7 @@
  * The implementation handles format conversion, real-time audio processing, and provides
  * a unified interface for both capture methods through a shared circular buffer.
  */
+// header include
 #import "av_audio.h"
 
 // standard includes
@@ -19,6 +20,7 @@
 #include "src/logging.h"
 #include "src/utility.h"
 
+// platform includes
 #import <AudioToolbox/AudioConverter.h>
 #import <CoreAudio/CATapDescription.h>
 
@@ -60,6 +62,14 @@ namespace platf {
                                  callback(granted == YES);
                                }];
     });
+  }
+
+  bool request_system_audio_permission() {
+    AVAudio *probe = [[AVAudio alloc] init];
+    probe.hostAudioEnabled = YES;
+    const bool started = [probe setupSystemTap:48000 frameSize:512 channels:2] == 0;
+    [probe release];
+    return started;
   }
 
   /**
@@ -136,14 +146,14 @@ namespace platf {
           UInt32 maxOutputFrames = procData->conversionBufferSize / (clientChannels * sizeof(float));
           UInt32 requestedOutputFrames = maxOutputFrames;
 
-          AudioConverterInputData inputData = {0};
+          AudioConverterInputData inputData {};
           inputData.inputData = inputSamples;
           inputData.inputFrames = inputFrames;
           inputData.framesProvided = 0;  // Critical: must start at 0!
           inputData.deviceChannels = deviceChannels;
           inputData.avAudio = avAudio;
 
-          AudioBufferList outputBufferList = {0};
+          AudioBufferList outputBufferList {};
           outputBufferList.mNumberBuffers = 1;
           outputBufferList.mBuffers[0].mNumberChannels = clientChannels;
           outputBufferList.mBuffers[0].mDataByteSize = procData->conversionBufferSize;
@@ -810,7 +820,7 @@ namespace platf {
                    << " -> client: "sv << clientSampleRate << "Hz/" << (int) clientChannels << "ch)"sv;
 
   if (needsConversion) {
-    AudioStreamBasicDescription sourceFormat = {0};
+    AudioStreamBasicDescription sourceFormat {};
     sourceFormat.mSampleRate = (Float64) aggregateDeviceSampleRate;
     sourceFormat.mFormatID = kAudioFormatLinearPCM;
     sourceFormat.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
@@ -820,7 +830,7 @@ namespace platf {
     sourceFormat.mChannelsPerFrame = aggregateDeviceChannels;
     sourceFormat.mBitsPerChannel = 32;
 
-    AudioStreamBasicDescription targetFormat = {0};
+    AudioStreamBasicDescription targetFormat {};
     targetFormat.mSampleRate = (Float64) clientSampleRate;
     targetFormat.mFormatID = kAudioFormatLinearPCM;
     targetFormat.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
