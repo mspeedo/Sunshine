@@ -195,11 +195,11 @@ pacman -R sunshine
 Configure the `stable` repository for releases or the `beta` repository for prereleases. The setup script
 automatically selects the appropriate Debian or Ubuntu release.
 
-@tabs{
-  @tab_with_pipe{ Stable |:| ```bash
+@tabs_grouped{release-channel|:|
+  @tab{ Stable |:| ```bash
     curl -1sLf 'https://dl.cloudsmith.io/public/lizardbyte/stable/cfg/setup/bash.deb.sh' | sudo -E bash
     ```}
-  @tab_with_pipe{ Beta |:| ```bash
+  @tab{ Beta |:| ```bash
     curl -1sLf 'https://dl.cloudsmith.io/public/lizardbyte/beta/cfg/setup/bash.deb.sh' | sudo -E bash
     ```}
 }
@@ -240,22 +240,22 @@ sudo apt remove sunshine
 Configure the `stable` repository for releases or the `beta` repository for prereleases. Cloudsmith's setup script
 automatically selects Fedora or openSUSE and the appropriate release.
 
-@tabs{
-  @tab_with_pipe{ Stable |:| ```bash
+@tabs_grouped{release-channel|:|
+  @tab{ Stable |:| ```bash
     curl -1sLf 'https://dl.cloudsmith.io/public/lizardbyte/stable/cfg/setup/bash.rpm.sh' | sudo -E bash
     ```}
-  @tab_with_pipe{ Beta |:| ```bash
+  @tab{ Beta |:| ```bash
     curl -1sLf 'https://dl.cloudsmith.io/public/lizardbyte/beta/cfg/setup/bash.rpm.sh' | sudo -E bash
     ```}
 }
 
 Install Sunshine with your distribution's package manager.
 
-@tabs{
-  @tab{ Fedora | ```bash
+@tabs_grouped{distribution|:|
+  @tab{ Fedora |:| ```bash
     sudo dnf install Sunshine
     ```}
-  @tab{ openSUSE | ```bash
+  @tab{ openSUSE |:| ```bash
     sudo zypper install Sunshine
     ```}
 }
@@ -264,11 +264,11 @@ Install Sunshine with your distribution's package manager.
 
 Download `Sunshine-{version}-1.{distro+version}.{arch}.rpm` and run the following command.
 
-@tabs{
-  @tab{ Fedora | ```bash
+@tabs_grouped{distribution|:|
+  @tab{ Fedora |:| ```bash
     sudo dnf install ./Sunshine-{version}-1.{distro+version}.{arch}.rpm
     ```}
-  @tab{ openSUSE | ```bash
+  @tab{ openSUSE |:| ```bash
     sudo zypper install ./Sunshine-{version}-1.{distro+version}.{arch}.rpm
     ```}
 }
@@ -282,11 +282,11 @@ Download `Sunshine-{version}-1.{distro+version}.{arch}.rpm` and run the followin
 
 ##### Uninstall
 
-@tabs{
-  @tab{ Fedora | ```bash
+@tabs_grouped{distribution|:|
+  @tab{ Fedora |:| ```bash
     sudo dnf remove Sunshine
     ```}
-  @tab{ openSUSE | ```bash
+  @tab{ openSUSE |:| ```bash
     sudo zypper remove Sunshine
     ```}
 }
@@ -400,7 +400,19 @@ brew uninstall sunshine
 ### macOS
 
 > [!IMPORTANT]
-> Sunshine on macOS is experimental. Gamepads do not work.
+> Virtual gamepads require the separately installed, licensed
+> [Virtual HID Broker](https://github.com/LizardByte/libvirtualhid/releases/latest).
+
+To use gamepads, download the macOS universal libvirtualhid DMG from the link above. Open it and run
+**Install libvirtualhid.command** to install Virtual HID Broker. In **System Settings > Privacy & Security >
+Device Control and Data Access**, add `/Applications/VirtualHIDBroker.app` and enable it. Restart the broker if
+you changed this permission with `sudo launchctl kickstart -k system/dev.lizardbyte.app.libvirtualhid`.
+Activate the machine license in Sunshine’s
+**Troubleshooting > Virtual HID Broker License** section. In **Configuration > Input**, turn on **Enable Gamepad Input**
+and choose the emulated gamepad. The Gamepad Backend setting can be set to **None** to disable gamepads without affecting
+keyboard or mouse input. Sunshine’s menu bar **Virtual HID Broker** submenu shows the license status and links
+for license management and downloads. Sunshine’s DMG does not contain the broker. Keyboard and mouse input use the
+standard macOS synthetic-input permission path.
 
 #### DMG
 
@@ -551,7 +563,26 @@ systemctl --user --now enable app-dev.lizardbyte.app.Sunshine
 > XDG Desktop Portal, but it is also aliased to "sunshine.service" for convenience.
 
 ### macOS
-The first time you start Sunshine, you will be asked to grant access to screen recording and your microphone.
+On first launch, Sunshine requests Screen Recording and keyboard and mouse control when those features are enabled.
+It also requests Microphone access if you configured a custom **Audio Sink**, and optional Notifications access when
+the system tray is enabled. Open **Troubleshooting > Permissions** in the Web UI to review these permissions or
+open their System Settings pages. Sunshine restarts once after missing required permissions are granted, including
+when a permission was removed and later restored.
+If macOS offers **Quit & Reopen** after you allow Screen Recording, choose it so the running process receives the new
+access. Sunshine exits its tray and server threads before macOS reopens it.
+
+On macOS 15 and newer, macOS requests Local Network access when Sunshine advertises itself with Bonjour. System Audio
+Recording access is requested once at startup with a brief audio tap, when the first stream captures audio if startup
+access was unavailable, or when you use its Web UI button. The button also opens Screen & System Audio Recording
+settings. macOS does not offer Sunshine a passive status check for Local Network
+or System Audio Recording, so the Web UI identifies them as permissions handled when used. The Local Network button
+opens **Privacy & Security**; choose **Local Network** there to manage app access.
+Sunshine uses libvirtualhid to send keyboard and mouse events through CoreGraphics. Virtual gamepads use the separately
+installed Virtual HID Broker described in the macOS gamepad setup above. Sunshine shows the broker's availability and
+license under **Troubleshooting > Virtual Input**.
+If a macOS privacy switch is enabled but Sunshine still reports access denied, remove that Sunshine entry and add the
+installed app again. Development builds should use a consistent Apple-issued signing identity so macOS can recognize
+the app across updates.
 
 Sunshine supports native system audio capture on macOS 14.0 (Sonoma) and newer via Apple’s Audio Tap API.
 To use it, simply leave the **Audio Sink** setting blank.
@@ -569,15 +600,15 @@ and enter its device name in the [audio_sink](configuration.md#audio_sink) field
 
 ### Windows
 Sunshine supports two virtual gamepad backends on Windows. You can install the
-[Virtual HID Driver](https://github.com/LizardByte/libvirtualhid/releases/latest) separately as an optional paid upgrade
-for a driver-backed Raw Input keyboard and mouse plus full virtual gamepad support. ViGEmBus remains available as a
-limited alternative for Xbox 360 and DualShock 4 gamepads, but it has reached end of life.
+[Virtual HID Broker](https://github.com/LizardByte/libvirtualhid/releases/latest) separately as an optional paid upgrade.
+Its Windows package includes a broker service and user-mode driver for a Raw Input keyboard and mouse plus full virtual
+gamepad support. ViGEmBus remains available as a limited alternative for Xbox 360 and DualShock 4 gamepads, but it has reached end of life.
 
-When Virtual HID Driver is used, Sunshine requires version `2026.905.2300.20` or newer.
+When Virtual HID Broker is used, Sunshine requires libvirtualhid version `2026.914.1218.10` or newer.
 
-Compared with the ViGEmBus fallback, Virtual HID Driver can create Xbox One, Xbox Series, DualSense, Nintendo Switch
+Compared with the ViGEmBus fallback, Virtual HID Broker can create Xbox One, Xbox Series, DualSense, Nintendo Switch
 Pro, and Generic gamepads in addition to Xbox 360 and DualShock 4. It can also expose controller-specific features such
-as motion, touchpads, LEDs, and adaptive triggers when supported. Virtual HID Driver is actively developed and
+as motion, touchpads, LEDs, and adaptive triggers when supported. Virtual HID Broker is actively developed and
 supported by the LizardByte team.
 
 With a compatible driver and active license, normal key transitions are exposed through a real HID keyboard so
@@ -589,15 +620,16 @@ Relative mouse movement, buttons, and scrolling are exposed as a real HID
 mouse so applications using Raw Input can receive them. Absolute mouse positioning continues to use Windows input
 injection. When the driver-backed mouse cannot be created, libvirtualhid retains its legacy SendInput fallback.
 
-The Virtual HID Driver requires an active paid machine license for driver-backed devices, including gamepads and the Raw
+The Virtual HID Broker requires an active paid machine license for driver-backed devices, including gamepads and the Raw
 Input keyboard and mouse. Sunshine shows the current license status and actions on the Web UI Troubleshooting page and
-in the **Virtual HID Driver** system tray submenu. In **Configuration > Input**, choose whether Sunshine may use **All
-Available Drivers**, only **Virtual HID Driver**, or only **ViGEmBus**. Sunshine continues to show the selection prompt
-until this setting is saved. If an active Virtual HID Driver license is already present, Sunshine selects **All Available
-Drivers** automatically. That policy prefers Virtual HID Driver. When its license is not valid, Sunshine falls back to
+in the **Virtual HID Broker** system tray submenu. In **Configuration > Input**, choose whether Sunshine may use **All
+Available Drivers**, only **Virtual HID Broker**, or only **ViGEmBus**. Sunshine continues to show the selection prompt
+until this setting is saved. If an active Virtual HID Broker license is already present, Sunshine selects **All Available
+Drivers** automatically. That policy prefers Virtual HID Broker. When its license is not valid, Sunshine falls back to
 ViGEmBus for Xbox 360 and DualShock 4 gamepads and to SendInput for keyboard and mouse. Selecting only **ViGEmBus**
-suppresses Virtual HID Driver startup notifications and limits the available emulated gamepads to Xbox 360 and
-DualShock 4. Sunshine recreates the shared keyboard and mouse after a successful license action, so switching between
+suppresses Virtual HID Broker startup notifications and limits the available emulated gamepads to Xbox 360 and
+DualShock 4. **None** disables all virtual gamepads and their startup notices without affecting keyboard or mouse
+input. Sunshine recreates the shared keyboard and mouse after a successful license action, so switching between
 the HID and SendInput paths does not require restarting Sunshine.
 
 After installing or updating virtual input drivers, it is recommended to restart your computer.
@@ -678,19 +710,20 @@ by default. You may replace *localhost* with your internal ip address.
 
 7. If you run into issues, logs are available in the `Troubleshooting` tab.
    You can navigate through each warning/error message for clues to the issue.
+
    ![Logs](images/troubleshooting-logs.png)
 
 ### Arguments
 To get a list of available arguments, run the following command.
 
-@tabs{
-   @tab{ General | ```bash
+@tabs_grouped{linux-package|:|
+   @tab{ General |:| ```bash
       sunshine --help
       ```}
-   @tab{ AppImage | ```bash
+   @tab{ AppImage |:| ```bash
       ./Sunshine_{version}_{arch}.AppImage --help
       ```}
-   @tab{ Flatpak | ```bash
+   @tab{ Flatpak |:| ```bash
       flatpak run --command=sunshine dev.lizardbyte.app.Sunshine --help
       ```}
 }
@@ -725,7 +758,6 @@ All shortcuts start with `Ctrl+Alt+Shift`, just like Moonlight.
 * The "Desktop" app works the same as any other application except it has no commands. It does not start an application,
   instead it simply starts a stream. If you removed it and would like to get it back, just add a new application with
   the name "Desktop" and "desktop.png" as the image path.
-* For the Linux flatpak you must prepend commands with `flatpak-spawn --host`.
 * If inputs (mouse, keyboard, gamepads...) aren't working after connecting:
 
   * On FreeBSD/Linux, add the user running sunshine to the `input` group.
@@ -756,14 +788,14 @@ Streaming HDR content is officially supported on Windows hosts and experimentall
 
 Additional information:
 
-@tabs{
-  @tab{ Windows |
+@tabs_grouped{platform|:|
+  @tab{ Windows |:|
   - HDR streaming is supported for Intel, AMD, and NVIDIA GPUs that support encoding HEVC Main 10 or AV1 10-bit profiles.
   - We recommend calibrating the display by streaming the Windows HDR Calibration app to your client device and saving an HDR calibration profile to use while streaming.
   - Older games that use NVIDIA-specific NVAPI HDR rather than native Windows HDR support may not display properly in HDR.
   }
 
-@tab{ Linux |
+@tab{ Linux |:|
   - HDR streaming is supported for Intel and AMD GPUs that support encoding HEVC Main 10 or AV1 10-bit profiles using VAAPI.
   - The KMS capture backend is required for HDR capture. Other capture methods, like NvFBC or X11, do not support HDR.
   - You will need a desktop environment with a compositor that supports HDR rendering, such as Gamescope or KDE Plasma 6.
@@ -778,20 +810,8 @@ Tutorial videos are available [here](https://www.youtube.com/playlist?list=PLMYr
 
 Guides are available [here](guides.md).
 
-@admonition{Community! |
+@admonition{Community! |:|
 Tutorials and Guides are community generated. Want to contribute? Reach out to us on our discord server.}
 
-<div class="section_buttons">
-
-| Previous                 |                      Next |
-|:-------------------------|--------------------------:|
-| [Overview](../README.md) | [Changelog](changelog.md) |
-
-</div>
-
-<details style="display: none;">
-  <summary></summary>
-  [TOC]
-</details>
 
 [latest-release]: https://github.com/LizardByte/Sunshine/releases/latest
