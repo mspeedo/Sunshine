@@ -2082,7 +2082,7 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
     <tr>
         <td>Range</td>
-        <td colspan="2">0-255</td>
+        <td colspan="2">0-100</td>
     </tr>
     <tr>
         <td>Example</td>
