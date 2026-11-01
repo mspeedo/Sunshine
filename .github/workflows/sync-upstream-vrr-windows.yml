@@ -39,27 +39,23 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/LizardByte/Sunshine.git
           git fetch upstream master --no-tags
-          git merge --no-ff --no-commit -X ours upstream/master
-          if ($LASTEXITCODE -ne 0) {
-            $conflicts = @(git diff --name-only --diff-filter=U)
-            if ($conflicts.Count -eq 0) { throw "Merge failed without resolvable conflicts" }
-            Write-Host "Merge conflicts (preserving fork changes in conflicting hunks):"
-            $conflicts | ForEach-Object { Write-Host $_ }
-            foreach ($file in $conflicts) {
-              git checkout --ours -- "$file"
-              if ($LASTEXITCODE -ne 0) { throw "Failed to resolve $file" }
-              git add -- "$file"
-              if ($LASTEXITCODE -ne 0) { throw "Failed to stage $file" }
+          git merge-base --is-ancestor upstream/master HEAD
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Upstream master already merged. Keeping reviewed branch unchanged."
+          } elseif ($LASTEXITCODE -eq 1) {
+            git merge --no-ff --no-commit upstream/master
+            if ($LASTEXITCODE -ne 0) {
+              $conflicts = @(git diff --name-only --diff-filter=U)
+              throw "Upstream merge requires manual, context-aware conflict review. Conflicts: $conflicts"
             }
-            $remaining = @(git diff --name-only --diff-filter=U)
-            if ($remaining.Count -gt 0) { throw "Unresolved merge conflicts: $remaining" }
+            # GITHUB_TOKEN lacks workflow scope; keep existing fork workflows for this Git commit.
+            git restore --source=HEAD --staged --worktree -- .github/workflows
+            if ($LASTEXITCODE -ne 0) { throw "Cannot preserve workflow files" }
+            git commit -m "Merge original LizardByte/Sunshine master into vrr-optimized (retain CI workflows)"
+            if ($LASTEXITCODE -ne 0) { throw "Merge commit failed" }
+          } else {
+            throw "Cannot establish upstream ancestry"
           }
-          # GitHub Actions' token cannot push changes to existing workflow files.
-          # Keep the fork's existing workflow files, applying upstream CI changes later with the GitHub connector.
-          git restore --source=HEAD --staged --worktree -- .github/workflows
-          if ($LASTEXITCODE -ne 0) { throw "Cannot preserve workflow files" }
-          git commit -m "Merge original LizardByte/Sunshine master into vrr-optimized (retain CI workflows)"
-          if ($LASTEXITCODE -ne 0) { throw "Merge commit failed" }
           git config -f .gitmodules submodule.third-party/moonlight-common-c.url https://github.com/mspeedo/moonlight-common-c.git
           if ($LASTEXITCODE -ne 0) { throw "Cannot change moonlight-common-c remote" }
           git add .gitmodules
