@@ -39,7 +39,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/LizardByte/Sunshine.git
           git fetch upstream master --no-tags
-          git merge --no-ff --no-edit -X ours upstream/master
+          git merge --no-ff --no-commit -X ours upstream/master
           if ($LASTEXITCODE -ne 0) {
             $conflicts = @(git diff --name-only --diff-filter=U)
             if ($conflicts.Count -eq 0) { throw "Merge failed without resolvable conflicts" }
@@ -53,9 +53,13 @@ jobs:
             }
             $remaining = @(git diff --name-only --diff-filter=U)
             if ($remaining.Count -gt 0) { throw "Unresolved merge conflicts: $remaining" }
-            git commit -m "Merge original LizardByte/Sunshine master into vrr-optimized"
-            if ($LASTEXITCODE -ne 0) { throw "Merge commit failed" }
           }
+          # GitHub Actions' token cannot push changes to existing workflow files.
+          # Keep the fork's existing workflow files, applying upstream CI changes later with the GitHub connector.
+          git restore --source=HEAD --staged --worktree -- .github/workflows
+          if ($LASTEXITCODE -ne 0) { throw "Cannot preserve workflow files" }
+          git commit -m "Merge original LizardByte/Sunshine master into vrr-optimized (retain CI workflows)"
+          if ($LASTEXITCODE -ne 0) { throw "Merge commit failed" }
           git config -f .gitmodules submodule.third-party/moonlight-common-c.url https://github.com/mspeedo/moonlight-common-c.git
           if ($LASTEXITCODE -ne 0) { throw "Cannot change moonlight-common-c remote" }
           git add .gitmodules
