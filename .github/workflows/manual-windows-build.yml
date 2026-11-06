@@ -13,6 +13,8 @@ on:
       - '.github/workflows/manual-windows-build.yml'
       - 'src/remote_presets.h'
       - 'src/confighttp.cpp'
+      - 'src/nvhttp.cpp'
+      - 'src/remote_admin_tokens.h'
       - 'tests/unit/test_remote_presets.cpp'
 
 jobs:
