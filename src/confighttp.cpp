@@ -60,6 +60,7 @@
 #include "platform/permissions.h"
 #include "process.h"
 #include "remote_presets.h"
+#include "remote_admin_tokens.h"
 #include "rtsp.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -642,6 +643,22 @@ namespace confighttp {
     response->write(SimpleWeb::StatusCode::redirection_temporary_redirect, headers);
   }
 
+  // Paired-client bearer tokens deliberately authorize ONLY remote settings,
+  // presets, and restart. They cannot manage credentials, pairing, apps, logs,
+  // permissions, or the rest of the browser administration API.
+  bool allowed_paired_admin_endpoint(const req_https_t &request) {
+    const auto &path = request->path;
+    const auto &method = request->method;
+    if (method == "GET") {
+      return path == "/api/csrf-token" || path == "/api/config" || path == "/api/config-presets";
+    }
+    if (method == "POST") {
+      return path == "/api/config" || path == "/api/config-presets" ||
+             path == "/api/config-presets/apply" || path == "/api/restart";
+    }
+    return method == "DELETE" && path == "/api/config-presets";
+  }
+
   /**
    * @brief Authenticate the user.
    * @param response The HTTP response object.
@@ -655,6 +672,19 @@ namespace confighttp {
       BOOST_LOG(info) << "Web UI: ["sv << address << "] -- denied"sv;
       response->write(SimpleWeb::StatusCode::client_error_forbidden);
       return false;
+    }
+
+    // Bearer credentials are minted only by Sunshine's already mTLS-authorized
+    // GameStream listener. Limit this delegation to the explicit API allowlist.
+    if (const auto auth = request->header.find("authorization"); auth != request->header.end()) {
+      const std::string_view value = auth->second;
+      if (value.starts_with("Bearer ")) {
+        if (allowed_paired_admin_endpoint(request) && remote_admin_tokens::validate(value.substr(7))) {
+          return true;
+        }
+        send_unauthorized(response, request);
+        return false;
+      }
     }
 
     // If credentials are shown, redirect the user to a /welcome page
@@ -779,6 +809,14 @@ namespace confighttp {
       }
     }
 
+    // Bind CSRF tokens to one bearer credential, not to an IP shared by PCs.
+    if (const auto auth = request->header.find("authorization"); auth != request->header.end()) {
+      const std::string_view value = auth->second;
+      if (value.starts_with("Bearer ")) {
+        return "paired:" + std::string(value.substr(7));
+      }
+    }
+
     // Fall back to IP address if no username
     return net::addr_to_normalized_string(request->remote_endpoint().address());
   }
@@ -850,6 +888,17 @@ namespace confighttp {
    * @brief Validate CSRF token.
    */
   bool validate_csrf_token(const resp_https_t &response, const req_https_t &request, const std::string &client_id) {
+    // Bearer callers must supply the CSRF token issued to this specific grant,
+    // even when their native HTTP client sends no Origin or Referer header.
+    if (const auto auth = request->header.find("authorization"); auth != request->header.end() &&
+        std::string_view(auth->second).starts_with("Bearer ")) {
+      const auto supplied = request->header.find("X-CSRF-Token");
+      if (supplied == request->header.end()) {
+        bad_request(response, "Missing CSRF token");
+        return false;
+      }
+      return validate_stored_csrf_token(response, request, client_id, supplied->second);
+    }
     // Helper function to check if a URL starts with any allowed origin
     auto is_allowed_origin = [](const std::string_view url) {
       return std::ranges::any_of(config::sunshine.csrf_allowed_origins, [&url](const std::string &allowed_origin) {
