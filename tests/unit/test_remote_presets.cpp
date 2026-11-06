@@ -4,9 +4,8 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <string>
-
 #include <src/remote_presets.h>
+#include <string>
 
 namespace {
   namespace fs = std::filesystem;
@@ -22,14 +21,17 @@ namespace {
       config = dir / "sunshine.conf";
       write("encoder = nvenc\n");
     }
+
     ~preset_fixture_t() {
       std::error_code ignored;
       fs::remove_all(dir, ignored);
     }
+
     void write(const std::string &content) {
       std::ofstream out(config, std::ios::binary | std::ios::trunc);
       out << content;
     }
+
     std::string read() const {
       std::ifstream in(config, std::ios::binary);
       return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
