@@ -13,8 +13,8 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <new>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -1612,10 +1612,7 @@ namespace confighttp {
     }
     try {
       std::scoped_lock lock(remote_preset_mutex);
-      send_response(response, {
-        {"status", true},
-        {"presets", remote_presets::list(config::sunshine.config_file)}
-      });
+      send_response(response, {{"status", true}, {"presets", remote_presets::list(config::sunshine.config_file)}});
     } catch (const std::exception &error) {
       BOOST_LOG(warning) << "Cannot list remote presets: "sv << error.what();
       bad_request(response, "Cannot list configuration presets");
