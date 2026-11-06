@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "file_handler.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -15,8 +17,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "file_handler.h"
 
 namespace remote_presets {
   namespace fs = std::filesystem;
@@ -76,8 +76,7 @@ namespace remote_presets {
     if (fs::exists(target) && (fs::is_symlink(fs::symlink_status(target)) || !overwrite)) {
       throw std::runtime_error("Preset already exists or cannot be overwritten");
     }
-    if (!fs::copy_file(config_file, target,
-                       overwrite ? fs::copy_options::overwrite_existing : fs::copy_options::none)) {
+    if (!fs::copy_file(config_file, target, overwrite ? fs::copy_options::overwrite_existing : fs::copy_options::none)) {
       throw std::runtime_error("Preset could not be saved");
     }
 #ifndef _WIN32
