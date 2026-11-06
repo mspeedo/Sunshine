@@ -11,6 +11,9 @@ on:
       - feature/remote-sunshine-presets
     paths:
       - '.github/workflows/manual-windows-build.yml'
+      - 'src/remote_presets.h'
+      - 'src/confighttp.cpp'
+      - 'tests/unit/test_remote_presets.cpp'
 
 jobs:
   build-windows-installer:
