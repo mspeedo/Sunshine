@@ -14,6 +14,7 @@
 #include <format>
 #include <fstream>
 #include <new>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -93,6 +94,7 @@ namespace confighttp {
 
   namespace {
     using license_status_provider_t = std::function<lvh::LicenseResult()>;  ///< Provider for the current libvirtualhid license status.
+    std::mutex remote_preset_mutex;  ///< Serialize local config saves and preset restores.
 #ifdef SUNSHINE_TESTS
     std::optional<nlohmann::json> permission_status_override;  ///< Deterministic permission statuses for HTTP tests.
 #endif
@@ -1485,6 +1487,7 @@ namespace confighttp {
     output_tree["platform"] = SUNSHINE_PLATFORM;
     output_tree["version"] = PROJECT_VERSION;
 
+    std::scoped_lock lock(remote_preset_mutex);
     auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
 
     for (auto &[name, value] : vars) {
@@ -1558,7 +1561,10 @@ namespace confighttp {
         // we should migrate the config file to straight JSON and get rid of all this nonsense
         config_stream << k << " = " << (v.is_string() ? v.get<std::string>() : v.dump()) << std::endl;
       }
-      file_handler::write_file(config::sunshine.config_file.c_str(), config_stream.str());
+      std::scoped_lock lock(remote_preset_mutex);
+      if (file_handler::write_file(config::sunshine.config_file.c_str(), config_stream.str()) != 0) {
+        throw std::runtime_error("Could not persist Sunshine configuration");
+      }
       output_tree["status"] = true;
       send_response(response, output_tree);
     } catch (std::exception &e) {
@@ -1569,8 +1575,6 @@ namespace confighttp {
 
   // Keep preset operations serialized; config swaps and backup must not race.
   namespace {
-    std::mutex remote_preset_mutex;
-
     template<typename Callback>
     void modifyConfigPreset(const resp_https_t &response, const req_https_t &request, Callback &&callback) {
       if (!check_content_type(response, request, "application/json") || !authenticate(response, request)) {
