@@ -58,6 +58,7 @@
 #include "platform/common.h"
 #include "platform/permissions.h"
 #include "process.h"
+#include "remote_presets.h"
 #include "rtsp.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -1566,6 +1567,79 @@ namespace confighttp {
     }
   }
 
+  // Keep preset operations serialized; config swaps and backup must not race.
+  namespace {
+    std::mutex remote_preset_mutex;
+
+    template<typename Callback>
+    void modifyConfigPreset(const resp_https_t &response, const req_https_t &request, Callback &&callback) {
+      if (!check_content_type(response, request, "application/json") || !authenticate(response, request)) {
+        return;
+      }
+      const auto client_id = get_client_id(request);
+      if (!validate_csrf_token(response, request, client_id)) {
+        return;
+      }
+
+      try {
+        std::stringstream body;
+        body << request->content.rdbuf();
+        const auto input = nlohmann::json::parse(body.str());
+        const auto name = input.at("name").get<std::string>();
+        // Reject names before any filesystem operation.
+        if (!remote_presets::valid_name(name)) {
+          bad_request(response, "Invalid preset name (1-48 ASCII letters, numbers, _ or -)");
+          return;
+        }
+        std::scoped_lock lock(remote_preset_mutex);
+        callback(input, name);
+        send_response(response, {{"status", true}});
+      } catch (const std::exception &error) {
+        BOOST_LOG(warning) << "Remote preset request rejected: "sv << error.what();
+        bad_request(response, "Preset operation failed (missing preset, duplicate name or filesystem error)");
+      }
+    }
+  }  // namespace
+
+  /** @brief List named on-disk Sunshine configuration snapshots. */
+  void getConfigPresets(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+    try {
+      std::scoped_lock lock(remote_preset_mutex);
+      send_response(response, {
+        {"status", true},
+        {"presets", remote_presets::list(config::sunshine.config_file)}
+      });
+    } catch (const std::exception &error) {
+      BOOST_LOG(warning) << "Cannot list remote presets: "sv << error.what();
+      bad_request(response, "Cannot list configuration presets");
+    }
+  }
+
+  /** @brief Save current disk configuration without affecting running streams. */
+  void saveConfigPreset(const resp_https_t &response, const req_https_t &request) {
+    modifyConfigPreset(response, request, [](const auto &input, const std::string &name) {
+      const auto overwrite = input.value("overwrite", false);
+      remote_presets::save(config::sunshine.config_file, name, overwrite);
+    });
+  }
+
+  /** @brief Stage a preset on disk; call the existing /api/restart to activate. */
+  void applyConfigPreset(const resp_https_t &response, const req_https_t &request) {
+    modifyConfigPreset(response, request, [](const auto &, const std::string &name) {
+      remote_presets::apply(config::sunshine.config_file, name);
+    });
+  }
+
+  /** @brief Delete a named preset only, never the currently active config. */
+  void deleteConfigPreset(const resp_https_t &response, const req_https_t &request) {
+    modifyConfigPreset(response, request, [](const auto &, const std::string &name) {
+      remote_presets::remove(config::sunshine.config_file, name);
+    });
+  }
+
   /**
    * @brief Get an application's image.
    * @param response The HTTP response object.
@@ -2494,6 +2568,10 @@ namespace confighttp {
     server.resource["^/api/clients/update$"]["POST"] = updateClient;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
+    server.resource["^/api/config-presets$"]["GET"] = getConfigPresets;
+    server.resource["^/api/config-presets$"]["POST"] = saveConfigPreset;
+    server.resource["^/api/config-presets$"]["DELETE"] = deleteConfigPreset;
+    server.resource["^/api/config-presets/apply$"]["POST"] = applyConfigPreset;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
     server.resource["^/api/covers/([0-9]+)$"]["GET"] = getCover;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
