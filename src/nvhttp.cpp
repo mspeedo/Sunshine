@@ -37,6 +37,7 @@
 #include "nvhttp.h"
 #include "platform/common.h"
 #include "process.h"
+#include "remote_admin_tokens.h"
 #include "rtsp.h"
 #include "string_hash.h"
 #include "system_tray.h"
@@ -1733,6 +1734,24 @@ namespace nvhttp {
     https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) {
       pair<SunshineHTTPS>(resp, req);
     };
+    // Only the paired-client GameStream TLS listener may mint remote-settings
+    // credentials. Its handshake already requires an enabled Moonlight client
+    // certificate, so no Basic web-administrator password is needed.
+    https_server.resource["^/remote-admin-token$"]["GET"] = [](resp_https_t response, req_https_t request) {
+      const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+      if (net::from_address(address) > http::origin_web_ui_allowed) {
+        response->write(SimpleWeb::StatusCode::client_error_forbidden);
+        return;
+      }
+      const SimpleWeb::CaseInsensitiveMultimap headers {
+        {"Content-Type", "application/json"},
+        {"Cache-Control", "no-store"},
+        {"X-Content-Type-Options", "nosniff"}
+      };
+      const auto token = remote_admin_tokens::issue();
+      response->write(SimpleWeb::StatusCode::success_ok, nlohmann::json {{"token", token}}.dump(), headers);
+      response->close_connection_after_response = true;
+    };
     https_server.resource["^/applist$"]["GET"] = applist;
     https_server.resource["^/appasset$"]["GET"] = appasset;
     https_server.resource["^/launch$"]["GET"] = [&host_audio](auto resp, auto req) {
@@ -1795,6 +1814,7 @@ namespace nvhttp {
     std::lock_guard lock {client_auth_mutex()};
     client_root = {};
     cert_chain.clear();
+    remote_admin_tokens::revoke_all();
     save_state();
   }
 
@@ -1811,6 +1831,9 @@ namespace nvhttp {
     }
 
     rebuild_client_cert_chain();
+    if (removed) {
+      remote_admin_tokens::revoke_all();
+    }
     save_state();
     return removed;
   }
@@ -1821,6 +1844,7 @@ namespace nvhttp {
       if (named_cert.uuid == uuid) {
         named_cert.enabled = enabled;
         rebuild_client_cert_chain();
+        remote_admin_tokens::revoke_all();
         save_state();
         return true;
       }
