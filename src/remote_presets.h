@@ -73,6 +73,10 @@ namespace remote_presets {
     require_regular_file(config_file);
     const auto target = preset_file(config_file, name);
     fs::create_directories(target.parent_path());
+#ifndef _WIN32
+    // Snapshots can contain sensitive host configuration and paths.
+    fs::permissions(target.parent_path(), fs::perms::owner_all, fs::perm_options::replace);
+#endif
     if (fs::exists(target) && (fs::is_symlink(fs::symlink_status(target)) || !overwrite)) {
       throw std::runtime_error("Preset already exists or cannot be overwritten");
     }
@@ -96,6 +100,9 @@ namespace remote_presets {
       throw std::runtime_error("Backup path cannot be a symbolic link");
     }
     fs::copy_file(config_file, backup, fs::copy_options::overwrite_existing);
+#ifndef _WIN32
+    fs::permissions(backup, fs::status(config_file).permissions(), fs::perm_options::replace);
+#endif
     const auto replacement = file_handler::read_file(preset.string().c_str());
     if (file_handler::write_file(config_file.string().c_str(), replacement) != 0) {
       // Do not report success after a failed write; best-effort rollback.
