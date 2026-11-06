@@ -31,3 +31,11 @@ Presets are full-text snapshots in `config-presets/<name>.conf`, alongside the a
 ## Verification
 
 New `tests/unit/test_remote_presets.cpp` covers validation, save, list, restore, collision refusal, backup and deletion. Full Sunshine CI and a runtime paired-host test are still required before production deployment.
+
+## Login-free paired Moonlight access
+
+The GameStream HTTPS endpoint `GET /remote-admin-token` is protected by the existing enabled paired-client mutual-TLS handshake. For clients allowed under `origin_web_ui_allowed`, it mints a random 48-character bearer credential kept in memory for at most 30 minutes. The web configuration server accepts that token ONLY for these method/path combinations: GET `/api/csrf-token`, GET/POST `/api/config`, GET/POST/DELETE `/api/config-presets`, POST `/api/config-presets/apply`, and POST `/api/restart`.
+
+The token is not accepted for pairing, apps, logs, credential changes, or other administrative API endpoints. Mutations require a CSRF token bound to this exact bearer grant; all requests retain the web UI origin-policy restriction. All grants are revoked when a paired client is unpaired/disabled or when the host restarts. Normal browser login and authentication behavior are unchanged.
+
+This intentionally treats a device with a valid, enabled Moonlight pairing private key as an administrator for **only** the remote-settings functions. Anyone who can use a paired Moonlight client can now edit host settings and restart Sunshine. Keep the GameStream and web management ports limited to trusted LAN/VPN access.
