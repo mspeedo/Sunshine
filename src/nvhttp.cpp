@@ -474,6 +474,7 @@ namespace nvhttp {
     });
     client_root.named_devices.emplace_back(std::move(named_cert));
     rebuild_client_cert_chain();
+    remote_admin_tokens::revoke_all();
 
     if (!config::sunshine.flags[config::flag::FRESH_STATE]) {
       save_state();
