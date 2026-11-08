@@ -5,10 +5,11 @@ permissions: {}
 
 on:
   workflow_dispatch:
-  # Temporary feature-branch CI trigger; remove after verification.
+  # One-time development Windows installer build; revert after queuing.
   push:
     branches:
       - feature/remote-sunshine-presets
+      - development
     paths:
       - '.github/workflows/manual-windows-build.yml'
       - 'src/remote_presets.h'
