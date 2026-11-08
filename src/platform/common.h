@@ -745,6 +745,15 @@ namespace platf {
     }
 
     /**
+     * @brief Prefer the actual encoder-time ceiling for faster-than-client-rate
+     *        source frames. WGC compositor timestamps can predate frame delivery.
+     * @details Truly sub-ceiling source frames still bypass the rate-limit timer.
+     */
+    virtual bool use_encoder_time_rate_limit() const {
+      return false;
+    }
+
+    /**
      * @brief Allocate an image buffer compatible with this display backend.
      *
      * @return Allocated img object, or null when unavailable.

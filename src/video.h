@@ -817,8 +817,9 @@ namespace video {
      *
      * @param frame_interval Minimum interval between encoded frames.
      */
-    explicit source_capture_rate_limiter_t(std::chrono::nanoseconds frame_interval):
-        frame_interval_(frame_interval) {}
+    explicit source_capture_rate_limiter_t(std::chrono::nanoseconds frame_interval, bool use_encoder_time_for_fast_frames = false):
+        frame_interval_(frame_interval),
+        use_encoder_time_for_fast_frames_(use_encoder_time_for_fast_frames) {}
 
     /**
      * @brief Calculate how long the encoder should wait before processing another source frame.
@@ -840,11 +841,22 @@ namespace video {
       }
 
       if (frame_timestamp && last_frame_timestamp_) {
-        const auto target_timestamp = std::max(*frame_timestamp, *last_frame_timestamp_ + frame_interval_);
-        if (now >= target_timestamp) {
-          return std::chrono::nanoseconds::zero();
+        if (use_encoder_time_for_fast_frames_) {
+          // On WGC, delayed compositor delivery makes a source-time deadline
+          // unreliable for controlling actual encoded frames. If the source
+          // cadence is below the cap, preserve its VRR spacing unchanged;
+          // otherwise fall through to the last actual encode-time deadline.
+          if (*frame_timestamp >= *last_frame_timestamp_ + frame_interval_) {
+            return std::chrono::nanoseconds::zero();
+          }
+        } else {
+          // Keep the existing presentation-timeline behavior for DDX.
+          const auto target_timestamp = std::max(*frame_timestamp, *last_frame_timestamp_ + frame_interval_);
+          if (now >= target_timestamp) {
+            return std::chrono::nanoseconds::zero();
+          }
+          return std::chrono::duration_cast<std::chrono::nanoseconds>(target_timestamp - now);
         }
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(target_timestamp - now);
       }
 
       if (!next_encode_time_ || now >= *next_encode_time_) {
@@ -893,6 +905,7 @@ namespace video {
 
   private:
     std::chrono::nanoseconds frame_interval_;  ///< Client-requested minimum interval between encoded frames.
+    bool use_encoder_time_for_fast_frames_;  ///< Avoid historical compositor-timestamp deadlines for WGC.
     std::optional<std::chrono::steady_clock::time_point> next_encode_time_;  ///< Next time a source frame may begin encoding.
     std::optional<std::chrono::steady_clock::time_point> last_frame_timestamp_;  ///< Last timestamp forwarded to the transport.
   };

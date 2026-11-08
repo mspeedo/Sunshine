@@ -2443,7 +2443,7 @@ namespace video {
     std::unique_ptr<platf::high_precision_timer> source_capture_rate_timer;
     if (disp->is_capture_source_driven()) {
       const auto frame_interval = capture_frame_interval(config);
-      source_capture_rate_limiter.emplace(frame_interval);
+      source_capture_rate_limiter.emplace(frame_interval, disp->use_encoder_time_rate_limit());
       source_capture_rate_timer = platf::create_high_precision_timer();
       if (!source_capture_rate_timer || !*source_capture_rate_timer) {
         BOOST_LOG(warning) << "Failed to create high precision timer for source-driven capture rate limiting; falling back to std::this_thread::sleep_for()"sv;

@@ -828,6 +828,9 @@ namespace platf::dxgi {
     bool is_capture_source_driven() const override {
       return true;
     }
+    bool use_encoder_time_rate_limit() const override {
+      return true;
+    }
     /**
      * @brief Initialize shared D3D capture resources for a GPU frame.
      *
@@ -869,6 +872,9 @@ namespace platf::dxgi {
      * @return Always true for the Windows Graphics Capture backend.
      */
     bool is_capture_source_driven() const override {
+      return true;
+    }
+    bool use_encoder_time_rate_limit() const override {
       return true;
     }
     /**

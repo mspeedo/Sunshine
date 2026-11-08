@@ -551,6 +551,41 @@ TEST(SourceCaptureRateLimiterTest, PresentationTimelineDoesNotAccumulateTimerOve
 }
 
 /**
+ * @brief WGC's over-rate frames use the real encoder deadline, not an aged
+ *        compositor timestamp; sub-ceiling source VRR frames pass unchanged.
+ */
+TEST(SourceCaptureRateLimiterTest, WgcEncoderClockCeilingPreservesSlowSourceVrr) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  video::source_capture_rate_limiter_t limiter {10ms, true};
+
+  EXPECT_EQ(base, limiter.limit_frame_timestamp(base));
+  limiter.mark_frame_encoded(base + 5ms);
+
+  // The source generated an over-rate frame at t=7 ms, but WGC delivered
+  // it at t=9 ms. It cannot encode before the actual 15 ms deadline.
+  EXPECT_EQ(6ms, limiter.delay_until_next_frame(base + 9ms, base + 7ms));
+  EXPECT_EQ(0ns, limiter.delay_until_next_frame(base + 15ms, base + 7ms));
+
+  // A genuine 90 FPS source should not gain an extra encoder-timer delay
+  // even when scheduling jitter brings its callback slightly early.
+  EXPECT_EQ(0ns, limiter.delay_until_next_frame(base + 14ms, base + 11ms));
+}
+
+/**
+ * @brief WGC's ceiling should not accrue extra sleep from a forwarded
+ *        timestamp that has advanced beyond the actual encoder clock.
+ */
+TEST(SourceCaptureRateLimiterTest, WgcDoesNotAccumulateTimestampDelay) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  video::source_capture_rate_limiter_t limiter {10ms, true};
+  EXPECT_EQ(base + 100ms, limiter.limit_frame_timestamp(base + 100ms));
+  limiter.mark_frame_encoded(base + 90ms);
+
+  // Deadline already passed: no artificial wait against a future source time.
+  EXPECT_EQ(0ns, limiter.delay_until_next_frame(base + 101ms, base + 101ms));
+}
+
+/**
  * @brief Source-driven timestamp limiting preserves slower VRR timing and clamps faster cadence.
  */
 TEST(SourceCaptureRateLimiterTest, LimitsPresentationTimestamps) {

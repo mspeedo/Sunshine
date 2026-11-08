@@ -1868,9 +1868,31 @@ namespace platf::dxgi {
    * Get the next frame from the Windows.Graphics.Capture API and copy it into a new snapshot texture.
    */
   capture_e display_wgc_vram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
+    dup.set_cursor_visible(cursor_visible);
+
+    // The encoder may hold an output image or its keyed mutex while finishing
+    // conversion. Prepare both before taking ownership of a WGC pool buffer;
+    // otherwise these waits can stall a single-buffer WGC capture session.
+    std::shared_ptr<platf::img_t> img;
+    if (!pull_free_image_cb(img)) {
+      return capture_e::interrupted;
+    }
+    auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
+    if (complete_img(d3d_img.get(), false)) {
+      return capture_e::capture_error;
+    }
+    texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
+    if (!lock_helper.lock()) {
+      BOOST_LOG(error) << "Failed to lock capture texture";
+      return capture_e::capture_error;
+    }
+
+    // The destination is now ready: obtain the newest compositor frame and
+    // issue the one necessary GPU copy without waiting for the encoder.
+    // The existing release_snapshot() path retains WGC ownership through
+    // the handoff; CopyResource submission itself is asynchronous.
     texture2d_t src;
     uint64_t frame_qpc;
-    dup.set_cursor_visible(cursor_visible);
     auto capture_status = dup.next_frame(timeout, &src, frame_qpc);
     if (capture_status != capture_e::ok) {
       return capture_status;
@@ -1879,44 +1901,19 @@ namespace platf::dxgi {
     auto frame_timestamp = std::chrono::steady_clock::now() - qpc_time_difference(qpc_counter(), frame_qpc);
     D3D11_TEXTURE2D_DESC desc;
     src->GetDesc(&desc);
-
-    // It's possible for our display enumeration to race with mode changes and result in
-    // mismatched image pool and desktop texture sizes. If this happens, just reinit again.
     if (desc.Width != width_before_rotation || desc.Height != height_before_rotation) {
       BOOST_LOG(info) << "Capture size changed ["sv << width << 'x' << height << " -> "sv << desc.Width << 'x' << desc.Height << ']';
       return capture_e::reinit;
     }
-
-    // It's also possible for the capture format to change on the fly. If that happens,
-    // reinitialize capture to try format detection again and create new images.
     if (capture_format != desc.Format) {
       BOOST_LOG(info) << "Capture format changed ["sv << dxgi_format_to_string(capture_format) << " -> "sv << dxgi_format_to_string(desc.Format) << ']';
       return capture_e::reinit;
     }
 
-    std::shared_ptr<platf::img_t> img;
-    if (!pull_free_image_cb(img)) {
-      return capture_e::interrupted;
-    }
-
-    auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-    d3d_img->blank = false;  // image is always ready for capture
-    if (complete_img(d3d_img.get(), false) == 0) {
-      texture_lock_helper lock_helper(d3d_img->capture_mutex.get());
-      if (lock_helper.lock()) {
-        device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
-      } else {
-        BOOST_LOG(error) << "Failed to lock capture texture";
-        return capture_e::capture_error;
-      }
-    } else {
-      return capture_e::capture_error;
-    }
-    img_out = img;
-    if (img_out) {
-      img_out->frame_timestamp = frame_timestamp;
-    }
-
+    device_ctx->CopyResource(d3d_img->capture_texture.get(), src.get());
+    d3d_img->blank = false;
+    img->frame_timestamp = frame_timestamp;
+    img_out = std::move(img);
     return capture_e::ok;
   }
 
