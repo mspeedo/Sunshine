@@ -80,6 +80,29 @@ constexpr auto __mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID con
 #endif
 
 namespace platf::dxgi {
+  namespace {
+    /**
+     * WGC SystemRelativeTime is a WinRT TimeSpan in 100-ns units, not a raw
+     * QueryPerformanceCounter value. Convert to QPC ticks before using the
+     * shared qpc_time_difference() helper for capture timestamps.
+     */
+    constexpr std::uint64_t wgc_time_to_qpc_ticks(std::int64_t time_100ns, std::int64_t qpc_frequency) {
+      if (time_100ns <= 0 || qpc_frequency <= 0) {
+        return 0;
+      }
+
+      constexpr std::int64_t time_units_per_second = 10'000'000;
+      // Split whole and fractional seconds to avoid overflow in the product.
+      const auto seconds = time_100ns / time_units_per_second;
+      const auto remainder = time_100ns % time_units_per_second;
+      return static_cast<std::uint64_t>(
+        seconds * qpc_frequency + (remainder * qpc_frequency) / time_units_per_second);
+    }
+
+    static_assert(wgc_time_to_qpc_ticks(10'000'000, 3'579'545) == 3'579'545);
+    static_assert(wgc_time_to_qpc_ticks(5'000'000, 10'000'000) == 5'000'000);
+  }  // namespace
+
   wgc_capture_t::wgc_capture_t() {
     InitializeConditionVariable(&frame_present_cv);
   }
@@ -139,7 +162,9 @@ namespace platf::dxgi {
     }
 
     try {
-      frame_pool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(uwp_device, static_cast<winrt::Windows::Graphics::DirectX::DirectXPixelFormat>(display->capture_format), 2, item.Size());
+      // Keep only one WGC pool buffer to avoid presenting an older queued frame.
+      // The existing producer/consumer mailbox separately retains the latest frame.
+      frame_pool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(uwp_device, static_cast<winrt::Windows::Graphics::DirectX::DirectXPixelFormat>(display->capture_format), 1, item.Size());
       capture_session = frame_pool.CreateCaptureSession(item);
       frame_pool.FrameArrived({this, &wgc_capture_t::on_frame_arrived});
     } catch (winrt::hresult_error &e) {
@@ -180,11 +205,24 @@ namespace platf::dxgi {
    */
   void wgc_capture_t::on_frame_arrived(winrt::Direct3D11CaptureFramePool const &sender, winrt::IInspectable const &) {
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame {nullptr};
+    std::uint32_t drained_frames = 0;
     try {
+      // Callbacks are not guaranteed to correspond one-to-one with pending
+      // frames. Drain any backlog and forward only the newest frame.
       frame = sender.TryGetNextFrame();
+      while (auto newer_frame = sender.TryGetNextFrame()) {
+        if (frame) {
+          frame.Close();
+          ++drained_frames;
+        }
+        frame = std::move(newer_frame);
+      }
     } catch (winrt::hresult_error &e) {
       BOOST_LOG(warning) << "Failed to capture frame: "sv << e.code();
       return;
+    }
+    if (drained_frames) {
+      BOOST_LOG(debug) << "WGC skipped " << drained_frames << " stale queued frame(s)";
     }
     if (frame != nullptr) {
       AcquireSRWLockExclusive(&frame_lock);
@@ -229,7 +267,15 @@ namespace platf::dxgi {
       return capture_e::capture_error;
     }
     capture_access->GetInterface(IID_ID3D11Texture2D, (void **) out);
-    out_time = consumed_frame.SystemRelativeTime().count();  // raw ticks from query performance counter
+    static const std::int64_t qpc_frequency = []() {
+      LARGE_INTEGER frequency {};
+      return QueryPerformanceFrequency(&frequency) ? frequency.QuadPart : 0;
+    }();
+    out_time = wgc_time_to_qpc_ticks(consumed_frame.SystemRelativeTime().count(), qpc_frequency);
+    if (!out_time) {
+      // Preserve a valid timestamp if the OS does not supply capture timing.
+      out_time = static_cast<std::uint64_t>(qpc_counter());
+    }
     return capture_e::ok;
   }
 
