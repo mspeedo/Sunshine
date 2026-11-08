@@ -819,6 +819,16 @@ namespace platf::dxgi {
 
   public:
     /**
+     * @brief Report that WGC capture is driven by compositor frame-arrival events.
+     *
+     * @details Capture each available WGC frame without a client-rate polling timer;
+     *          asynchronous encoders apply per-client rate limits downstream.
+     * @return Always true for the Windows Graphics Capture backend.
+     */
+    bool is_capture_source_driven() const override {
+      return true;
+    }
+    /**
      * @brief Initialize shared D3D capture resources for a GPU frame.
      *
      * @param config Configuration values to apply.
@@ -851,6 +861,16 @@ namespace platf::dxgi {
     wgc_capture_t dup;
 
   public:
+    /**
+     * @brief Report that WGC capture is driven by compositor frame-arrival events.
+     *
+     * @details Capture each available WGC frame without a client-rate polling timer;
+     *          asynchronous encoders apply per-client rate limits downstream.
+     * @return Always true for the Windows Graphics Capture backend.
+     */
+    bool is_capture_source_driven() const override {
+      return true;
+    }
     /**
      * @brief Initialize Windows Graphics Capture frame-pool resources.
      *
