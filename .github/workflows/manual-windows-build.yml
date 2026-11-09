@@ -5,17 +5,17 @@ permissions: {}
 
 on:
   workflow_dispatch:
-  # Temporary one-off WGC processing-latency validation on development.
-  # Restore the feature-branch trigger after the build starts.
+  # Temporary feature-branch CI trigger; remove after verification.
   push:
     branches:
-      - development
+      - feature/remote-sunshine-presets
     paths:
       - '.github/workflows/manual-windows-build.yml'
-      - 'src/video.h'
-      - 'src/video.cpp'
-      - 'src/stream.cpp'
-      - 'tests/unit/test_video.cpp'
+      - 'src/remote_presets.h'
+      - 'src/confighttp.cpp'
+      - 'src/nvhttp.cpp'
+      - 'src/remote_admin_tokens.h'
+      - 'tests/unit/test_remote_presets.cpp'
 
 jobs:
   build-windows-installer:
