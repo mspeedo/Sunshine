@@ -1675,6 +1675,11 @@ namespace stream {
         };
 
         uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *host_start);
+        // WGC: zero is Moonlight's duplicate-frame sentinel. A real captured
+        // frame must remain distinguishable even if latency rounds/clamps to zero.
+        if (packet->processing_timestamp && latency == 0) {
+          latency = 1;  // 0.1 ms in the existing frame-header units.
+        }
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
       } else {
