@@ -10,6 +10,9 @@ on:
   push:
     branches:
       - development
+      - test/wgc-host-latency-min-0p1ms
+    paths:
+      - .github/workflows/manual-windows-build.yml
 
 jobs:
   build-windows-installer:
