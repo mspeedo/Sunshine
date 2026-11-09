@@ -11,7 +11,10 @@ param(
     [string]$Action,
 
     [Parameter(Mandatory=$false)]
-    [switch]$Silent
+    [switch]$Silent,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$SkipDocumentationLaunch
 )
 
 # Constants
@@ -246,6 +249,9 @@ if (-not $isAdmin) {
     if ($Silent) {
         $arguments += " -Silent"
     }
+    if ($SkipDocumentationLaunch) {
+        $arguments += " -SkipDocumentationLaunch"
+    }
 
     try {
         # Relaunch the script with elevation
@@ -425,8 +431,8 @@ if ($Action -eq "install") {
     Write-Progress -Activity "Installing Sunshine" -Completed
     Write-FramedText -Message "✓ Sunshine installation completed successfully!" -Level "Success"
 
-    # Open documentation in browser (only if not running silently)
-    if (-not $Silent) {
+    # Leave the browser closed for MSI installs, while preserving other installers' behavior.
+    if (-not $Silent -and -not $SkipDocumentationLaunch) {
         Write-Information ""
         Write-LogMessage `
             -Message "📖 Opening documentation in your browser: $DocsUrl" `

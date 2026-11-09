@@ -53,7 +53,7 @@
     </StandardDirectory>
 
     <!-- Install: Run sunshine-setup.ps1 with -Action install, add -Silent if UILevel <= 3 (silent/basic UI) -->
-    <CustomAction Id="CA_SunshineInstall" Directory="INSTALL_ROOT" ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALL_ROOT]scripts\sunshine-setup.ps1&quot; -Action install" Execute="deferred" Return="ignore" Impersonate="no" />
+    <CustomAction Id="CA_SunshineInstall" Directory="INSTALL_ROOT" ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALL_ROOT]scripts\sunshine-setup.ps1&quot; -Action install -SkipDocumentationLaunch" Execute="deferred" Return="ignore" Impersonate="no" />
     <CustomAction Id="CA_SunshineInstallSilent" Directory="INSTALL_ROOT" ExeCommand="powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALL_ROOT]scripts\sunshine-setup.ps1&quot; -Action install -Silent" Execute="deferred" Return="ignore" Impersonate="no" />
 
     <!-- Uninstall: Run sunshine-setup.ps1 with -Action uninstall, add -Silent if UILevel <= 3 (silent/basic UI) -->
