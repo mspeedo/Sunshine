@@ -538,7 +538,18 @@ namespace video {
     std::vector<replace_t> *replacements = nullptr;  ///< Optional encoded-byte substitutions applied before packetization.
     stream::session_t *channel_data = nullptr;  ///< Stream session that receives this packet.
     bool after_ref_frame_invalidation = false;  ///< Whether the frame follows reference-frame invalidation.
-    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;  ///< Capture timestamp associated with the frame.
+    std::optional<std::chrono::steady_clock::time_point> frame_timestamp;  ///< Timestamp forwarded for RTP presentation, possibly rate-clamped.
+    std::optional<std::chrono::steady_clock::time_point> processing_timestamp;  ///< Original WGC capture timestamp; absent for other backends.
+
+    /**
+     * @brief Timestamp used to measure capture-to-packet host processing latency.
+     * @details WGC preserves the unmodified capture timestamp even if its RTP
+     *          timestamp was advanced by the encoder rate limiter. Other backends
+     *          retain their previous behavior, including repeated frames.
+     */
+    std::optional<std::chrono::steady_clock::time_point> host_processing_start() const {
+      return processing_timestamp ? processing_timestamp : frame_timestamp;
+    }
   };
 
   /**

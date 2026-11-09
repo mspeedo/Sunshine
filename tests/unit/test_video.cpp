@@ -28,6 +28,33 @@ extern "C" {
 using namespace std::literals;
 
 /**
+ * @brief WGC host-processing telemetry uses the original frame timestamp while
+ *        leaving rate-limited RTP presentation timing unchanged.
+ */
+TEST(VideoPacketTimestampTest, WgcProcessingStartIndependentOfRtpTimestamp) {
+  const auto base = std::chrono::steady_clock::time_point {};
+  video::packet_raw_generic packet {std::vector<uint8_t> {}, 1, false};
+
+  EXPECT_EQ(std::nullopt, packet.host_processing_start());
+
+  const auto compositor_time = base + 5ms;
+  const auto clamped_rtp_time = base + 15ms;
+  packet.frame_timestamp = clamped_rtp_time;
+  EXPECT_EQ(clamped_rtp_time, packet.host_processing_start());
+
+  packet.processing_timestamp = compositor_time;
+  EXPECT_EQ(compositor_time, packet.host_processing_start());
+  EXPECT_EQ(clamped_rtp_time, packet.frame_timestamp);
+
+  // Clearing the per-frame measurement must never carry stale WGC timing
+  // into repeated/dummy frames or other backend packets.
+  packet.processing_timestamp.reset();
+  EXPECT_EQ(clamped_rtp_time, packet.host_processing_start());
+  packet.frame_timestamp.reset();
+  EXPECT_EQ(std::nullopt, packet.host_processing_start());
+}
+
+/**
  * @brief Packet replacement rules retain the original non-owning byte views.
  */
 TEST(VideoPacketReplacementTest, CopiesViewsWithoutCopyingTheirBackingBytes) {

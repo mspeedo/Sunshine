@@ -1824,10 +1824,11 @@ namespace video {
    * @param session Active FFmpeg encoder session.
    * @param packets Output queue that receives encoded packets.
    * @param channel_data Stream session that receives each encoded packet.
-   * @param frame_timestamp Capture timestamp associated with the encoded frame.
+   * @param frame_timestamp Forwarded RTP presentation timestamp (rate-clamped if necessary).
+   * @param processing_timestamp Original unmodified WGC capture time, if available.
    * @return 0 when packets are queued; nonzero when encoding or packetization fails.
    */
-  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_avcodec(int64_t frame_nr, avcodec_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp, std::optional<std::chrono::steady_clock::time_point> processing_timestamp) {
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
 
@@ -1891,6 +1892,7 @@ namespace video {
 
       if (av_packet && av_packet->pts == frame_nr) {
         packet->frame_timestamp = frame_timestamp;
+        packet->processing_timestamp = processing_timestamp;
       }
 
       packet->replacements = &session.replacements;
@@ -1908,10 +1910,11 @@ namespace video {
    * @param session Active NVENC encoder session.
    * @param packets Output queue that receives the encoded packet.
    * @param channel_data Stream session that receives the encoded packet.
-   * @param frame_timestamp Capture timestamp associated with the encoded frame.
+   * @param frame_timestamp Forwarded RTP presentation timestamp (rate-clamped if necessary).
+   * @param processing_timestamp Original unmodified WGC capture time, if available.
    * @return 0 when packets are queued; nonzero when NVENC encoding fails.
    */
-  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode_nvenc(int64_t frame_nr, nvenc_encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp, std::optional<std::chrono::steady_clock::time_point> processing_timestamp) {
     auto encoded_frame = session.encode_frame(frame_nr);
     if (encoded_frame.data.empty()) {
       BOOST_LOG(error) << "NvENC returned empty packet";
@@ -1926,6 +1929,7 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = frame_timestamp;
+    packet->processing_timestamp = processing_timestamp;
     packets->raise(std::move(packet));
 
     return 0;
@@ -1938,14 +1942,16 @@ namespace video {
    * @param session Active streaming or pairing session for the request.
    * @param packets Packets queued or emitted by the stream.
    * @param channel_data Channel data.
-   * @param frame_timestamp Frame timestamp.
+   * @param frame_timestamp Forwarded RTP presentation timestamp.
+   * @param processing_timestamp Optional original WGC capture timestamp used
+   *        only for host processing latency telemetry, never for RTP or pacing.
    * @return 0 when the frame is encoded and queued; nonzero on encoder failure.
    */
-  int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
+  int encode(int64_t frame_nr, encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp, std::optional<std::chrono::steady_clock::time_point> processing_timestamp = std::nullopt) {
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp);
+      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, processing_timestamp);
     } else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp);
+      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp, processing_timestamp);
     }
 
     return -1;
@@ -2487,6 +2493,7 @@ namespace video {
       }
 
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+      std::optional<std::chrono::steady_clock::time_point> processing_timestamp;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       if (!requested_idr_frame || images->peek()) {
@@ -2509,6 +2516,12 @@ namespace video {
 
             source_capture_rate_limiter->mark_frame_encoded(std::chrono::steady_clock::now());
             frame_timestamp = source_capture_rate_limiter->limit_frame_timestamp(img->frame_timestamp);
+            if (disp->use_encoder_time_rate_limit()) {
+              // WGC only: retain the selected image's true capture time for
+              // telemetry, after the newest-frame replacement above. Neither
+              // the existing limiter nor its forwarded RTP timestamp changes.
+              processing_timestamp = img->frame_timestamp;
+            }
           } else {
             frame_timestamp = img->frame_timestamp;
           }
@@ -2536,7 +2549,7 @@ namespace video {
         break;
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp)) {
+      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, processing_timestamp)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         return;
       }

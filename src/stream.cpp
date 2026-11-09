@@ -1647,13 +1647,16 @@ namespace stream {
         frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
       }
 
-      if (packet->frame_timestamp) {
+      // Use the original WGC capture timestamp for host processing latency.
+      // RTP still uses packet->frame_timestamp, including its existing limiter
+      // clamp. Non-WGC backends retain the same measurement as before.
+      if (auto host_start = packet->host_processing_start()) {
         auto duration_to_latency = [](const std::chrono::steady_clock::duration &duration) {
           const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
           return (uint16_t) std::clamp<decltype(duration_us)>((duration_us + 50) / 100, 0, std::numeric_limits<uint16_t>::max());
         };
 
-        uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *packet->frame_timestamp);
+        uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *host_start);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
       } else {
