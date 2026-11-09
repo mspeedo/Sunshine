@@ -10,6 +10,9 @@ on:
   push:
     branches:
       - development
+      - test/wgc-display-wake-recovery
+    paths:
+      - .github/workflows/manual-windows-build.yml
 
 jobs:
   build-windows-installer:
