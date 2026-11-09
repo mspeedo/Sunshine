@@ -33,6 +33,7 @@
   #include <display_device/windows/settings_manager.h>
   #include <display_device/windows/win_api_layer.h>
   #include <display_device/windows/win_display_device.h>
+  #include <windows.h>
 #endif
 
 #ifdef __APPLE__
@@ -912,12 +913,25 @@ namespace display_device {
   }
 
   bool wake_display(const std::string &display_name, std::chrono::milliseconds timeout) {
+#ifdef _WIN32
+    // Reset the Windows display idle timer when a WGC client starts streaming.
+    // This is a one-shot request, not a persistent power assertion on the HTTP
+    // worker thread. The capture thread keeps the display awake during a stream.
+    (void) display_name;
+    (void) timeout;
+    if (!SetThreadExecutionState(ES_DISPLAY_REQUIRED)) {
+      BOOST_LOG(warning) << "Failed to request Windows display wake: " << GetLastError();
+      return false;
+    }
+    return true;
+#else
     const auto display_power {make_display_power()};
     if (!display_power) {
       return false;
     }
 
     return display_power->wakeDisplay(display_name, timeout);
+#endif
   }
 
   std::unique_ptr<DisplayPowerGuardInterface> keep_display_awake(const std::string &reason) {
