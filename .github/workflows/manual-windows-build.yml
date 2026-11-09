@@ -5,17 +5,11 @@ permissions: {}
 
 on:
   workflow_dispatch:
-  # Temporary feature-branch CI trigger; remove after verification.
+  # Build every update to the maintained branch, including upstream merges.
+  # Add [skip ci] to a commit message to suppress its push-triggered build.
   push:
     branches:
-      - feature/remote-sunshine-presets
-    paths:
-      - '.github/workflows/manual-windows-build.yml'
-      - 'src/remote_presets.h'
-      - 'src/confighttp.cpp'
-      - 'src/nvhttp.cpp'
-      - 'src/remote_admin_tokens.h'
-      - 'tests/unit/test_remote_presets.cpp'
+      - development
 
 jobs:
   build-windows-installer:
