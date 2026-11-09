@@ -11,6 +11,7 @@ on:
     branches:
       - development
       - test/wgc-display-wake-recovery
+    # Trigger a fresh installer for the WGC desktop-access fix.
     paths:
       - .github/workflows/manual-windows-build.yml
 
