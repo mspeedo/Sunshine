@@ -10,8 +10,8 @@ on:
   push:
     branches:
       - development
-      - test/wgc-display-wake-recovery
-    # Trigger a fresh installer for the WGC desktop-access fix.
+      - test/wgc-ddx-bypass-no-wake
+    # Build the WGC desktop-access comparison without extra wake logic.
     paths:
       - .github/workflows/manual-windows-build.yml
 
