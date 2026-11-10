@@ -519,6 +519,7 @@ namespace platf::dxgi {
 
     auto adapter_name = utf_utils::from_utf8(config::video.adapter_name);
     auto output_name = utf_utils::from_utf8(display_name);
+    const bool explicit_wgc = config::video.capture == "wgc";
 
     adapter_t::pointer adapter_p;
     for (int tries = 0; tries < 2; ++tries) {
@@ -543,7 +544,10 @@ namespace platf::dxgi {
             continue;
           }
 
-          if (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false)) {
+          // WGC captures through GraphicsCaptureItem, not Desktop Duplication.
+          // Require an attached monitor handle but leave DDX validation intact.
+          if (desc.AttachedToDesktop &&
+              (explicit_wgc ? desc.Monitor != nullptr : test_dxgi_duplication(adapter_tmp, output_tmp, false))) {
             output = std::move(output_tmp);
 
             offset_x = desc.DesktopCoordinates.left;
@@ -1084,17 +1088,18 @@ namespace platf {
 
   std::vector<std::string> display_names(mem_type_e) {
     std::vector<std::string> display_names;
+    const bool explicit_wgc = config::video.capture == "wgc";
 
     HRESULT status;
 
     BOOST_LOG(debug) << "Detecting monitors..."sv;
 
-    // We sync the thread desktop once before we start the enumeration process
-    // to ensure test_dxgi_duplication() returns consistent results for all GPUs
-    // even if the current desktop changes during our enumeration process.
-    // It is critical that we either fully succeed in enumeration or fully fail,
-    // otherwise it can lead to the capture code switching monitors unexpectedly.
-    syncThreadDesktop();
+    // DDX eligibility checks must see a consistent input desktop. Explicit
+    // WGC capture does not use Desktop Duplication, so avoid changing the
+    // desktop of this thread just to enumerate attached monitor handles.
+    if (!explicit_wgc) {
+      syncThreadDesktop();
+    }
 
     dxgi::factory1_t factory;
     status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
@@ -1139,8 +1144,10 @@ namespace platf {
           << "    Resolution        : "sv << width << 'x' << height << std::endl
           << std::endl;
 
-        // Don't include the display in the list if we can't actually capture it
-        if (desc.AttachedToDesktop && dxgi::test_dxgi_duplication(adapter, output, true)) {
+        // WGC needs an attached HMONITOR, not a successful DuplicateOutput().
+        // Keep the original eligibility test for DDX and automatic selection.
+        if (desc.AttachedToDesktop &&
+            (explicit_wgc ? desc.Monitor != nullptr : dxgi::test_dxgi_duplication(adapter, output, true))) {
           display_names.emplace_back(std::move(device_name));
         }
       }
