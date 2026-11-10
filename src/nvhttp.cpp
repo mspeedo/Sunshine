@@ -13,7 +13,6 @@
 #include <format>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <utility>
 
 // lib includes
@@ -56,37 +55,6 @@ namespace nvhttp {
   namespace pt = boost::property_tree;
 
   crypto::cert_chain_t cert_chain;  ///< Enabled paired-client certificates accepted by Sunshine's GameStream HTTPS server.
-
-  // Only an actual WGC launch/resume should wake the Windows display.
-  // Server-information polling and other capture backends are unaffected.
-  void request_wgc_display_wake() {
-#ifdef _WIN32
-    if (config::video.capture == "wgc" && !display_device::wake_display({}, 0ms)) {
-      BOOST_LOG(warning) << "Windows display wake request failed before WGC capture";
-    }
-#endif
-  }
-
-  int probe_session_encoders() {
-    int result = video::probe_encoders();
-#ifdef _WIN32
-    if (result && config::video.capture == "wgc") {
-      // An idle display may not immediately be available after a wake request.
-      // Retry only failed WGC probes, within a short bounded recovery window.
-      const auto deadline = std::chrono::steady_clock::now() + 3s;
-      for (int retry = 0; retry < 8 && std::chrono::steady_clock::now() < deadline; ++retry) {
-        std::this_thread::sleep_for(350ms);
-        (void) display_device::wake_display({}, 0ms);
-        result = video::probe_encoders();
-        if (!result) {
-          BOOST_LOG(info) << "WGC encoder probe recovered after display wake";
-          break;
-        }
-      }
-    }
-#endif
-    return result;
-  }
 
   /**
    * @brief Get the mutex protecting paired-client authorization state.
@@ -1455,9 +1423,6 @@ namespace nvhttp {
       // The display should be restored in case something fails as there are no other sessions.
       revert_display_configuration = true;
 
-      // Wake an idle Windows display before configuration and capture probing.
-      request_wgc_display_wake();
-
       // We want to prepare display only if there are no active sessions at
       // the moment. This should be done before probing encoders as it could
       // change the active displays.
@@ -1467,7 +1432,7 @@ namespace nvhttp {
       // encoder matches the active GPU (which could have changed
       // due to hotplugging, driver crash, primary monitor change,
       // or any number of other factors).
-      if (probe_session_encoders()) {
+      if (video::probe_encoders()) {
         tree.put("root.<xmlattr>.status_code", 503);
         tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
         tree.put("root.gamesession", 0);
@@ -1570,9 +1535,6 @@ namespace nvhttp {
     const auto launch_session = make_launch_session(host_audio, args);
 
     if (no_active_sessions) {
-      // Wake an idle Windows display before configuration and capture probing.
-      request_wgc_display_wake();
-
       // We want to prepare display only if there are no active sessions at
       // the moment. This should be done before probing encoders as it could
       // change the active displays.
@@ -1582,7 +1544,7 @@ namespace nvhttp {
       // encoder matches the active GPU (which could have changed
       // due to hotplugging, driver crash, primary monitor change,
       // or any number of other factors).
-      if (probe_session_encoders()) {
+      if (video::probe_encoders()) {
         tree.put("root.resume", 0);
         tree.put("root.<xmlattr>.status_code", 503);
         tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
