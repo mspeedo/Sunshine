@@ -5,15 +5,10 @@ permissions: {}
 
 on:
   workflow_dispatch:
-  # Build every update to the maintained branch, including upstream merges.
-  # Add [skip ci] to a commit message to suppress its push-triggered build.
+  # Experimental no-wake comparison: allow a build from this branch on push.
   push:
     branches:
-      - development
       - test/wgc-ddx-bypass-no-wake
-    # Build the WGC desktop-access comparison without extra wake logic.
-    paths:
-      - .github/workflows/manual-windows-build.yml
 
 jobs:
   build-windows-installer:
