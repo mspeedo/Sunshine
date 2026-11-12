@@ -139,3 +139,42 @@ jobs:
           path: artifacts/Sunshine-Windows-AMD64-installer.msi
           if-no-files-found: error
           retention-days: 14
+
+  # Opt-in preservation of a successful Windows installer build as a Release.
+  # Only a push whose head commit contains [publish installer] invokes this job.
+  publish-installer-release:
+    name: Preserve installer in GitHub Releases
+    needs: build-windows-installer
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[publish installer]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download installer from this successful build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: Sunshine-Windows-AMD64-installer
+          path: release
+
+      - name: Publish development installer as prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          installer="release/Sunshine-Windows-AMD64-installer.msi"
+          test -s "$installer"
+          digest="$(sha256sum "$installer" | cut -d ' ' -f 1)"
+          printf 'Branch: development\nCommit: %s\nWorkflow run: https://github.com/%s/actions/runs/%s\nSHA256: %s\n' \
+            "$SOURCE_SHA" "$REPOSITORY" "$RUN_ID" "$digest" > release-notes.txt
+          gh release create "dev-build-${RUN_ID}" "$installer" \
+            --repo "$REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "Sunshine development build ${RUN_ID}" \
+            --notes-file release-notes.txt \
+            --prerelease \
+            --latest=false
